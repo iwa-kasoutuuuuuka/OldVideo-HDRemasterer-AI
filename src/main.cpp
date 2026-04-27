@@ -1,0 +1,84 @@
+#ifdef _WIN32
+#include <windows.h>
+#endif
+#include <iostream>
+#include <cstdio>
+#include <cxxopts.hpp>
+#include "video_processor.h"
+#include "gui.h"
+
+int main(int argc, char** argv) {
+#ifdef _WIN32
+    SetConsoleOutputCP(CP_UTF8); // コンソールの出力を UTF-8 に設定
+#endif
+
+    // 自動ログ出力の設定
+    std::freopen("latest_log.txt", "w", stdout);
+    std::freopen("latest_log.txt", "a", stderr);
+
+    std::cout << "--- OldVideo HDRemasterer AI - Session Started ---" << std::endl;
+    std::cout << "--- 動画リマスターセッション開始 ---" << std::endl;
+
+    // Priority: Run GUI if no arguments are provided
+    if (argc <= 1) {
+        std::cout << "[INFO] 引数が指定されていません。GUIモードを開始します... / No arguments provided. Starting GUI mode..." << std::endl;
+        return GUIManager::run();
+    }
+
+    try {
+        cxxopts::Options options("OldVideo HDRemasterer AI", "Real-ESRGAN と OpenCV に基づく AI 動画アップスケーラー / AI Video Upscaler based on Real-ESRGAN and OpenCV");
+
+        options.add_options()
+            ("i,input", "入力動画のパス (必須) / Input video path (Required)", cxxopts::value<std::string>())
+            ("o,output", "出力動画の保存パス (必須) / Output video path (Required)", cxxopts::value<std::string>())
+            ("s,scale", "拡大率 (2 または 4) / Upscale ratio (2 or 4)", cxxopts::value<int>()->default_value("4"))
+            ("t,tile", "VRAM節約のためのタイルサイズ (0 で自動) / Tile size for VRAM saving (0 for auto)", cxxopts::value<int>()->default_value("0"))
+            ("m,models", "モデルディレクトリのパス / Path to models directory", cxxopts::value<std::string>()->default_value("models"))
+            ("stab", "手ブレ補正を有効化 / Enable video stabilization", cxxopts::value<bool>()->default_value("false"))
+            ("interp", "フレーム補間 (RIFE) を有効化 / Enable frame interpolation (RIFE)", cxxopts::value<bool>()->default_value("false"))
+            ("h,help", "ヘルプを表示 / Show help");
+
+        auto result = options.parse(argc, argv);
+
+        if (result.count("help")) {
+            std::cout << options.help() << std::endl;
+            return 0;
+        }
+
+        if (!result.count("input") || !result.count("output")) {
+            std::cerr << "[ERROR] 入力パスと出力パスは必須です。 / Input and output paths are required." << std::endl;
+            std::cout << options.help() << std::endl;
+            return -1;
+        }
+
+        VideoProcessor::Config config;
+        config.input_path = result["input"].as<std::string>();
+        config.output_path = result["output"].as<std::string>();
+        config.scale = result["scale"].as<int>();
+        config.tile_size = result["tile"].as<int>();
+        config.model_dir = result["models"].as<std::string>();
+        config.enable_stabilization = result["stab"].as<bool>();
+        config.enable_interpolation = result["interp"].as<bool>();
+
+        if (config.scale != 2 && config.scale != 4) {
+            std::cerr << "[ERROR] 拡大率は 2 または 4 である必要があります。 / Scale must be 2 or 4." << std::endl;
+            return -1;
+        }
+
+        VideoProcessor processor;
+        if (processor.run(config)) {
+            std::cout << "[SUCCESS] 完了しました。 / Completed successfully." << std::endl;
+            return 0;
+        } else {
+            std::cerr << "[ERROR] 処理中にエラーが発生しました。 / An error occurred during processing." << std::endl;
+            return 1;
+        }
+
+    } catch (const cxxopts::exceptions::exception& e) {
+        std::cerr << "[ERROR] 引数の解析エラー: " << e.what() << " / Argument parsing error." << std::endl;
+        return -1;
+    } catch (const std::exception& e) {
+        std::cerr << "[ERROR] 予期せぬエラーが発生しました: " << e.what() << " / An unexpected error occurred." << std::endl;
+        return -1;
+    }
+}

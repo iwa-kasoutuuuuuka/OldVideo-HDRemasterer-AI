@@ -1,0 +1,31 @@
+# CMake
+build/
+bin/
+obj/
+CMakeFiles/
+CMakeCache.txt
+*.cmake
+install/
+
+# Visual Studio
+.vs/
+*.sln
+*.vcxproj
+*.filters
+*.user
+*.suo
+
+# Temporary/Logs
+*.log
+latest_log.txt
+build_log.txt
+build_error.log
+
+# AI Models (Downloader script provided)
+models/*.onnx
+models/*.bin
+models/*.param
+
+# Others
+.DS_Store
+Thumbs.db
