@@ -8,10 +8,11 @@ This software is a C++ tool designed to upscale low-resolution legacy videos to 
 - **言語 / Language**: C++17
 - **ビルド / Build**: CMake (3.10+)
 - **映像エンジン / Engine**:
-    - **OpenCV 4.11.0**: Stabilization, Encoding/Decoding.
-    - **ncnn**: Deep Learning inference (Vulkan GPU).
-    - **RIFE v2/v3/v4**: AI frame interpolation.
-    - **Real-ESRGAN**: AI super-resolution.
+    - **OpenCV 4.11.0**: [https://opencv.org/](https://opencv.org/) - Stabilization, Encoding/Decoding.
+    - **ncnn**: [https://github.com/Tencent/ncnn](https://github.com/Tencent/ncnn) - Deep Learning inference (Vulkan GPU).
+    - **RIFE v2/v3/v4**: [https://github.com/hzwer/arXiv2020-RIFE](https://github.com/hzwer/arXiv2020-RIFE) - AI frame interpolation.
+    - **Real-ESRGAN**: [https://github.com/xinntao/Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN) - AI super-resolution.
+    - **FFmpeg**: [https://ffmpeg.org/](https://ffmpeg.org/) - Audio merging and hardware encoding control.
 
 ## 3. 主要な機能 / Key Features
 

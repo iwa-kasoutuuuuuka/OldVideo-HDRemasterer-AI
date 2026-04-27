@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/logo.png" width="160" height="160" alt="OldVideo HDRemasterer AI Icon">
+</p>
+
 # OldVideo HDRemasterer AI
 
 AI アップスケーリング (Real-ESRGAN) とフレーム補間 (RIFE)、および実写向け補正機能を統合した動画リマスターツールです。 / 
@@ -56,6 +60,18 @@ cmake --build build --config Release
 ```bash
 ./OldVideoHDRemasterer_CPP --input input.mp4 --output output.mp4 --scale 4 --interp --stab
 ```
+
+## 外部ソフトウェアとライブラリ / External Software & Libraries
+
+本プロジェクトでは、以下の優れたオープンソースソフトウェアおよびライブラリを使用しています。 / This project utilizes the following excellent open-source software and libraries.
+
+- **FFmpeg**: [https://ffmpeg.org/](https://ffmpeg.org/) - 映像・音声のエンコードとデコード / Video & Audio encoding/decoding.
+- **OpenCV**: [https://opencv.org/](https://opencv.org/) - 映像解析・手ブレ補正 / Computer vision & stabilization.
+- **ncnn**: [https://github.com/Tencent/ncnn](https://github.com/Tencent/ncnn) - 高性能推論エンジン / High-performance neural network inference.
+- **Real-ESRGAN**: [https://github.com/xinntao/Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN) - 超解像 AI モデル / Super-resolution AI model.
+- **RIFE**: [https://github.com/hzwer/arXiv2020-RIFE](https://github.com/hzwer/arXiv2020-RIFE) - フレーム補間 AI モデル / Frame interpolation AI model.
+- **Dear ImGui**: [https://github.com/ocornut/imgui](https://github.com/ocornut/imgui) - グラフィカル UI / Graphical UI.
+- **Vulkan**: [https://www.vulkan.org/](https://www.vulkan.org/) - 高速な GPU アクセラレーション / High-performance GPU acceleration.
 
 ## ライセンス / License
 MIT License.
