@@ -43,6 +43,9 @@ bool Interpolator::load(const std::string& model_dir) {
             is_flownet = true;
         }
     }
+    
+    model_param = param;
+    model_bin = bin;
 
     if (gpudevice) {
         rife.set_vulkan_device(gpu_index);
@@ -57,6 +60,17 @@ bool Interpolator::load(const std::string& model_dir) {
         return false;
     }
 
+    return true;
+}
+
+bool Interpolator::switch_to_cpu() {
+    std::cout << "[WARNING] RIFE GPU 処理に失敗しました。CPU モードに切り替えます... / RIFE GPU processing failed. Switching to CPU mode..." << std::endl;
+    gpudevice = false;
+    rife.clear();
+    rife.opt.use_vulkan_compute = false;
+    
+    if (rife.load_param(model_param.c_str()) != 0) return false;
+    if (rife.load_model(model_bin.c_str()) != 0) return false;
     return true;
 }
 
@@ -88,9 +102,14 @@ bool Interpolator::process(const cv::Mat& f1, const cv::Mat& f2, cv::Mat& out, f
         if (!in2_name.empty()) ex.input(in2_name.c_str(), n_timestep);
         
         ncnn::Mat n_out;
-        ex.extract(out_name.c_str(), n_out);
+        int ret = ex.extract(out_name.c_str(), n_out);
+        
+        if (ret != 0 && gpudevice) {
+            if (switch_to_cpu()) return process(f1, f2, out, timestep);
+        }
+        
         n_out.to_pixels(out.data, ncnn::Mat::PIXEL_BGR);
-        return true;
+        return (ret == 0);
     }
 
     // Tiled processing for RIFE
@@ -114,7 +133,12 @@ bool Interpolator::process(const cv::Mat& f1, const cv::Mat& f2, cv::Mat& out, f
             if (!in2_name.empty()) ex.input(in2_name.c_str(), n_timestep);
             
             ncnn::Mat nt_out;
-            ex.extract(out_name.c_str(), nt_out);
+            int ret = ex.extract(out_name.c_str(), nt_out);
+
+            if (ret != 0 && gpudevice) {
+                if (switch_to_cpu()) return process(f1, f2, out, timestep);
+                else return false;
+            }
 
             cv::Mat t_out(nt_out.h, nt_out.w, CV_8UC3);
             nt_out.to_pixels(t_out.data, ncnn::Mat::PIXEL_BGR);

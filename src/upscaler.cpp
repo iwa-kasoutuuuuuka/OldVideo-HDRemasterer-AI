@@ -25,7 +25,6 @@ Upscaler::Upscaler() : scale(4), tile_size(0), gpudevice(false), gpu_index(-1) {
 
 Upscaler::~Upscaler() {
     net.clear();
-    ncnn::destroy_gpu_instance();
 }
 
 bool Upscaler::load(const std::string& model_dir, int _scale, int _tile_size, bool use_fast_model) {
@@ -64,6 +63,17 @@ bool Upscaler::load(const std::string& model_dir, int _scale, int _tile_size, bo
     return true;
 }
 
+bool Upscaler::switch_to_cpu() {
+    std::cout << "[WARNING] GPU 処理に失敗しました。VRAM 不足の可能性があります。CPU モードに切り替えます... / GPU processing failed. Switching to CPU mode..." << std::endl;
+    gpudevice = false;
+    net.clear();
+    net.opt.use_vulkan_compute = false;
+    
+    if (net.load_param(model_param.c_str()) != 0) return false;
+    if (net.load_model(model_bin.c_str()) != 0) return false;
+    return true;
+}
+
 bool Upscaler::process(const cv::Mat& in, cv::Mat& out) {
     if (in.empty()) return false;
 
@@ -74,15 +84,20 @@ bool Upscaler::process(const cv::Mat& in, cv::Mat& out) {
     int out_h = h * scale;
     out.create(out_h, out_w, CV_8UC3);
 
-    // Full image processing when tile_size is 0 or image is small enough
+    // Full image processing
     if (tile_size <= 0 || (tile_size >= w && tile_size >= h)) {
         ncnn::Mat n_in = ncnn::Mat::from_pixels(in.data, ncnn::Mat::PIXEL_BGR, w, h);
         ncnn::Extractor ex = net.create_extractor();
         ex.input("data", n_in);
         ncnn::Mat n_out;
-        ex.extract("output", n_out);
+        int ret = ex.extract("output", n_out);
+        
+        if (ret != 0 && gpudevice) {
+            if (switch_to_cpu()) return process(in, out);
+        }
+        
         n_out.to_pixels(out.data, ncnn::Mat::PIXEL_BGR);
-        return true;
+        return (ret == 0);
     }
 
     // Tiled processing for VRAM conservation
@@ -103,7 +118,12 @@ bool Upscaler::process(const cv::Mat& in, cv::Mat& out) {
             ncnn::Extractor ex = net.create_extractor();
             ex.input("data", n_tile_in);
             ncnn::Mat n_tile_out;
-            ex.extract("output", n_tile_out);
+            int ret = ex.extract("output", n_tile_out);
+
+            if (ret != 0 && gpudevice) {
+                if (switch_to_cpu()) return process(in, out);
+                else return false;
+            }
 
             cv::Mat tile_out(n_tile_out.h, n_tile_out.w, CV_8UC3);
             n_tile_out.to_pixels(tile_out.data, ncnn::Mat::PIXEL_BGR);
@@ -119,7 +139,6 @@ bool Upscaler::process(const cv::Mat& in, cv::Mat& out) {
             tile_out(cv::Range(src_y, src_y + target_h_tile), cv::Range(src_x, src_x + target_w_tile))
                 .copyTo(out(cv::Range(target_y, target_y + target_h_tile), cv::Range(target_x, target_x + target_w_tile)));
         }
-        std::cout << "." << std::flush;
     }
 
     return true;

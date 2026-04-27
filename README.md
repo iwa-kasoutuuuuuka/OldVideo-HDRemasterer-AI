@@ -14,6 +14,17 @@ A powerful video remastering tool that integrates AI upscaling (Real-ESRGAN), fr
 - **手ブレ補正 / Video Stabilization**: OpenCV による高度な安定化処理。 / Advanced stabilization processing using OpenCV.
 - **マルチ言語対応 / Multilingual Support**: 日本語と英語の表示切替に対応。 / Supports switching between Japanese and English.
 
+## 推奨される入力動画の仕様 / Recommended Input Specifications
+
+リマスターの効果を最大限に引き出すための推奨条件です。 / Recommended conditions for best results.
+
+- **解像度 / Resolution**: 
+  - **Best**: 480p (640x480, 720x480) - DVD 画質
+  - **Good**: 360p (640x360)
+  - **Notice**: 240p 以下は補完が不自然になる場合があります。 / Resolutions below 240p may result in artifacts.
+- **品質 / Quality**: 
+  - ブロックノイズが少ない動画ほど、AI はきれいにディテールを復元できます。 / Less compression noise allows for better AI restoration.
+
 ## 必要条件 / Requirements
 
 - **OS**: Windows (Vulkan 対応の GPU が必須 / Vulkan-compatible GPU required)

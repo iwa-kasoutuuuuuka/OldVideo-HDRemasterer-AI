@@ -36,6 +36,11 @@ private:
     bool gpudevice;
     bool is_flownet;
     int gpu_index;
+
+    bool switch_to_cpu();
+    
+    std::string model_param;
+    std::string model_bin;
 };
 
 #endif // INTERPOLATOR_H

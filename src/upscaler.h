@@ -38,6 +38,8 @@ private:
     bool gpudevice;
     int gpu_index;
     
+    bool switch_to_cpu();
+    
     std::string model_param;
     std::string model_bin;
 };

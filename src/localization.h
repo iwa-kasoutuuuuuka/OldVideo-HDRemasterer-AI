@@ -25,6 +25,7 @@ struct UIStrings {
     std::string enable_interp;
     std::string start_btn;
     std::string processing_btn;
+    std::string stop_btn;
     std::string status;
     std::string status_idle;
     std::string status_success;
@@ -70,6 +71,7 @@ private:
             strings.enable_interp = "フレーム補間 (RIFE) を有効化 / Enable Interpolation (60fps)";
             strings.start_btn = "リマスター開始 / Start Remaster";
             strings.processing_btn = "処理中... / Processing...";
+            strings.stop_btn = "停止 / Stop";
             strings.status = "ステータス / Status";
             strings.status_idle = "動画ファイルを選択してください / Please select a video file";
             strings.status_success = "成功: 完了しました！ / Success: Completed!";
@@ -92,6 +94,7 @@ private:
             strings.enable_interp = "Enable Interpolation (60fps)";
             strings.start_btn = "Start Remaster";
             strings.processing_btn = "Processing...";
+            strings.stop_btn = "Stop";
             strings.status = "Status";
             strings.status_idle = "Please select a video file";
             strings.status_success = "Success: Completed!";

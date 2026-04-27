@@ -9,42 +9,49 @@
 #include <chrono>
 #include <iomanip>
 #include <sstream>
-#include <ncnn/gpu.h>
+#include "gpu.h"
 
 namespace fs = std::filesystem;
 
 int VideoProcessor::get_auto_tile_size() {
-    if (ncnn::get_gpu_count() == 0) return 256; // Fallback for CPU
-    uint32_t budget_mb = ncnn::get_gpu_device(0)->get_heap_budget();
+    int gpu_idx = utils::get_preferred_gpu_index();
+    if (gpu_idx < 0) return 256; // Fallback for CPU
+    uint32_t budget_mb = ncnn::get_gpu_device(gpu_idx)->get_heap_budget();
     
     // Automatically clamp tile size based on approx total VRAM budget
-    if (budget_mb >= 8000) return 1024;
-    if (budget_mb >= 4000) return 512;
-    if (budget_mb >= 2000) return 256;
-    return 128;
+    if (budget_mb >= 8000) return 400;
+    if (budget_mb >= 4000) return 256;
+    if (budget_mb >= 2000) return 128;
+    return 64;
 }
 
 VideoProcessor::VideoProcessor() {}
 
 bool VideoProcessor::run(const Config& config) {
+    std::cout << "[RUN] Step 1: コンポーネント初期化中..." << std::endl << std::flush;
+    
     // 1. 各種コンポーネントの初期化
     Stabilizer stabilizer_svc;
     Interpolator interpolator_svc;
+    
+    std::cout << "[RUN] Step 1: コンポーネント初期化完了" << std::endl << std::flush;
     
     cv::VideoCapture cap;
     bool use_stabilizer = config.enable_stabilization;
 
     if (use_stabilizer) {
-        std::cout << "[INFO] 手ブレ補正を有効化しました。" << std::endl;
+        std::cout << "[INFO] 手ブレ補正を有効化しました。" << std::endl << std::flush;
         if (!stabilizer_svc.init(config.input_path)) {
             return false;
         }
     } else {
+        std::cout << "[RUN] Step 2: 動画ファイルを開いています: " << config.input_path << std::endl << std::flush;
         cap.open(config.input_path);
         if (!cap.isOpened()) {
-            std::cerr << "[ERROR] 動画ファイルを開けません: " << config.input_path << std::endl;
+            std::cerr << "[ERROR] 動画ファイルを開けません: " << config.input_path << std::endl << std::flush;
             return false;
         }
+        std::cout << "[RUN] Step 2: 動画ファイルを開きました" << std::endl << std::flush;
     }
 
     // 基本情報の取得
@@ -52,22 +59,30 @@ bool VideoProcessor::run(const Config& config) {
     int total_frames = use_stabilizer ? stabilizer_svc.get_frame_count() : static_cast<int>(cap.get(cv::CAP_PROP_FRAME_COUNT));
     int width = use_stabilizer ? 0 : static_cast<int>(cap.get(cv::CAP_PROP_FRAME_WIDTH));
     int height = use_stabilizer ? 0 : static_cast<int>(cap.get(cv::CAP_PROP_FRAME_HEIGHT));
+    std::cout << "[RUN] 動画情報: " << width << "x" << height << " @ " << fps << "fps, " << total_frames << " フレーム" << std::endl << std::flush;
 
     // 2. アップスケーラーと補完器のロード
     int actual_tile_size = config.tile_size;
     if (actual_tile_size <= 0) {
         actual_tile_size = get_auto_tile_size();
-        std::cout << "[INFO] タイルサイズを自動設定しました: " << actual_tile_size << std::endl;
+        std::cout << "[INFO] タイルサイズを自動設定しました: " << actual_tile_size << std::endl << std::flush;
     }
 
     if (config.progress_callback) config.progress_callback(0.05f, "AIモデルのロード中...");
+    std::cout << "[RUN] Step 3: AIモデルロード中..." << std::endl << std::flush;
     if (!upscaler.load(config.model_dir, config.scale, actual_tile_size, config.use_fast_model)) {
+        std::cerr << "[ERROR] AIモデルのロードに失敗しました" << std::endl << std::flush;
         return false;
     }
+    std::cout << "[RUN] Step 3: AIモデルロード完了" << std::endl << std::flush;
+    
     if (config.enable_interpolation) {
+        std::cout << "[RUN] Step 3b: RIFE モデルロード中..." << std::endl << std::flush;
         if (!interpolator_svc.load(config.model_dir)) {
+            std::cerr << "[ERROR] RIFEモデルのロードに失敗しました" << std::endl << std::flush;
             return false;
         }
+        std::cout << "[RUN] Step 3b: RIFE モデルロード完了" << std::endl << std::flush;
     }
 
     // 3. 出力設定
@@ -84,6 +99,12 @@ bool VideoProcessor::run(const Config& config) {
     auto start_time = std::chrono::steady_clock::now();
 
     while (true) {
+        // 中断チェック
+        if (config.stop_flag && *config.stop_flag) {
+            std::cout << "[INFO] ユーザーによって処理が中断されました。/ Processing interrupted by user." << std::endl;
+            break;
+        }
+
         if (use_stabilizer) {
             frame = stabilizer_svc.next_frame();
         } else {

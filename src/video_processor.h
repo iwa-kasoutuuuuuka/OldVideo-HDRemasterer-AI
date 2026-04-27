@@ -26,6 +26,9 @@ public:
 
         // 進捗通知用コールバック: float progress (0.0-1.0), string message
         std::function<void(float, std::string)> progress_callback = nullptr;
+        
+        // 中断フラグへのポインタ (true になると処理を中止)
+        bool* stop_flag = nullptr;
     };
 
     VideoProcessor();

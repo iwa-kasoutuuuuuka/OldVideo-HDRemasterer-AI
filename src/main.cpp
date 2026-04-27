@@ -3,14 +3,25 @@
 #endif
 #include <iostream>
 #include <cstdio>
+#include <locale>
 #include <cxxopts.hpp>
+#include "gpu.h"
 #include "video_processor.h"
 #include "gui.h"
 
 int main(int argc, char** argv) {
 #ifdef _WIN32
     SetConsoleOutputCP(CP_UTF8); // コンソールの出力を UTF-8 に設定
+    std::locale::global(std::locale(".UTF8"));
 #endif
+
+    // ncnn GPU インスタンスの初期化
+    try {
+        ncnn::create_gpu_instance();
+    } catch (const std::exception& e) {
+        std::cerr << "[CRASH] ncnn 初期化エラー: " << e.what() << std::endl << std::flush;
+        return -1;
+    }
 
     // 自動ログ出力の設定
     std::freopen("latest_log.txt", "w", stdout);

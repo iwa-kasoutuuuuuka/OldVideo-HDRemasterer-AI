@@ -29,3 +29,5 @@ models/*.param
 # Others
 .DS_Store
 Thumbs.db
+vulkansdk-windows-X64-1.4.341.1.exe
+*.exe

@@ -20,7 +20,16 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(cxxopts)
 
 # GLFW: Window management
-find_package(glfw3 CONFIG REQUIRED)
+FetchContent_Declare(
+  glfw
+  GIT_REPOSITORY https://github.com/glfw/glfw.git
+  GIT_TAG        3.4
+)
+set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
+set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(glfw)
 
 # OpenGL: Rendering
 find_package(OpenGL REQUIRED)
@@ -113,8 +122,11 @@ target_link_libraries(${PROJECT_NAME}
 )
 
 # Install rules / Portable setup (Copy OpenCV runtime dlls and AI models)
-# NOTE: DLL paths are environment dependent. Using relative search or assuming standard vcpkg layout is safer.
 add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    "F:/MovieAPP/HDRemaster/opencv_dev/opencv/build/x64/vc16/bin/opencv_world4110.dll"
+    "F:/MovieAPP/HDRemaster/opencv_dev/opencv/build/x64/vc16/bin/opencv_videoio_ffmpeg4110_64.dll"
+    $<TARGET_FILE_DIR:${PROJECT_NAME}>
     COMMAND ${CMAKE_COMMAND} -E copy_directory
     "${CMAKE_CURRENT_SOURCE_DIR}/models"
     "$<TARGET_FILE_DIR:${PROJECT_NAME}>/models"
