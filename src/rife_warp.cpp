@@ -10,14 +10,26 @@ Warp::Warp()
 
 int Warp::forward(const std::vector<ncnn::Mat>& bottom_blobs, std::vector<ncnn::Mat>& top_blobs, const ncnn::Option& opt) const
 {
-    const ncnn::Mat& image = bottom_blobs[0];
-    const ncnn::Mat& flow = bottom_blobs[1];
+    ncnn::Mat image = bottom_blobs[0];
+    ncnn::Mat flow = bottom_blobs[1];
+
+    if (image.elemsize != 4)
+    {
+        ncnn::cast_float16_to_float32(bottom_blobs[0], image, opt);
+    }
+    if (flow.elemsize != 4)
+    {
+        ncnn::cast_float16_to_float32(bottom_blobs[1], flow, opt);
+    }
+
     int w = image.w;
     int h = image.h;
     int channels = image.c;
 
     ncnn::Mat& top_blob = top_blobs[0];
-    top_blob.create(w, h, channels, image.elemsize, opt.blob_allocator);
+    top_blob.create(w, h, channels, 4u, opt.blob_allocator);
+    if (top_blob.empty())
+        return -100;
 
     #pragma omp parallel for num_threads(opt.num_threads)
     for (int q = 0; q < channels; q++)
@@ -36,6 +48,10 @@ int Warp::forward(const std::vector<ncnn::Mat>& bottom_blobs, std::vector<ncnn::
 
                 float src_x = (float)x + dx;
                 float src_y = (float)y + dy;
+
+                // NaN または Inf の場合は元の座標に戻してクラッシュを防止
+                if (std::isnan(src_x) || std::isinf(src_x)) src_x = (float)x;
+                if (std::isnan(src_y) || std::isinf(src_y)) src_y = (float)y;
 
                 if (src_x < 0) src_x = 0;
                 if (src_x > (float)w - 1) src_x = (float)w - 1;
@@ -62,6 +78,13 @@ int Warp::forward(const std::vector<ncnn::Mat>& bottom_blobs, std::vector<ncnn::
                                      fx * fy * v11;
             }
         }
+    }
+
+    if (bottom_blobs[0].elemsize != 4)
+    {
+        ncnn::Mat top_blob_fp16;
+        ncnn::cast_float32_to_float16(top_blob, top_blob_fp16, opt);
+        top_blob = top_blob_fp16;
     }
 
     return 0;

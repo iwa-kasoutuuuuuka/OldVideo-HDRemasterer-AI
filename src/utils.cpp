@@ -2,6 +2,9 @@
 #include <iostream>
 #include <iomanip>
 #include <cstdlib>
+#include <filesystem>
+#include <sstream>
+#include <algorithm>
 #include "gpu.h"
 
 namespace utils {
@@ -28,34 +31,77 @@ namespace utils {
         input.convertTo(output, -1, 1.05, 0); // alpha=1.05, beta=0 でわずかにコントラストを上げる
     }
 
-    bool merge_audio(const std::string& video_no_audio, const std::string& original_video, const std::string& final_output) {
+    std::string sanitize_path(const std::string& path) {
+        std::string s = path;
+        // OSコマンドインジェクションを防ぐため、シェルの特殊文字および改行コードを削除
+        const std::string unsafe_chars = "\"\';&|`$<>^%\n\r";
+        s.erase(std::remove_if(s.begin(), s.end(), [&unsafe_chars](char c) {
+            return unsafe_chars.find(c) != std::string::npos;
+        }), s.end());
+        return s;
+    }
+
+    bool check_ffmpeg_available() {
+        #ifdef _WIN32
+        if (std::system("where ffmpeg > nul 2>&1") == 0) {
+            return true;
+        }
+        if (std::filesystem::exists("ffmpeg.exe")) {
+            return true;
+        }
+        #else
+        if (std::system("which ffmpeg > /dev/null 2>&1") == 0) {
+            return true;
+        }
+        if (std::filesystem::exists("./ffmpeg")) {
+            return true;
+        }
+        #endif
+        return false;
+    }
+
+    bool merge_audio(const std::string& video_no_audio, const std::string& original_video, const std::string& final_output, bool enable_trim, double trim_start, double trim_duration) {
         std::cout << "[INFO] 音声のマージを開始します..." << std::endl;
         
-        // FFmpeg の存在確認 (PATH 内の ffmpeg を使用)
-        std::string ffmpeg_cmd = "ffmpeg";
+        std::string s_no_audio = sanitize_path(video_no_audio);
+        std::string s_original = sanitize_path(original_video);
+        std::string s_final = sanitize_path(final_output);
         
-        // システムの ffmpeg が使えるか確認 (デバッグ用)
+        std::string ffmpeg_cmd = "ffmpeg";
         #ifdef _WIN32
         if (std::system("where ffmpeg > nul 2>&1") != 0) {
-            std::cerr << "[WARNING] PATH に ffmpeg が見つかりません。デフォルトの場所や PATH 設定を確認してください。" << std::endl;
-            // 必要に応じて手動パス指定を検討
+            if (std::filesystem::exists("ffmpeg.exe")) {
+                ffmpeg_cmd = ".\\ffmpeg.exe";
+            } else {
+                std::cerr << "[WARNING] ffmpeg がシステム PATH にもカレントディレクトリにも見つかりません。" << std::endl;
+            }
         }
         #else
         if (std::system("which ffmpeg > /dev/null 2>&1") != 0) {
-            std::cerr << "[WARNING] PATH に ffmpeg が見つかりません。" << std::endl;
+            if (std::filesystem::exists("./ffmpeg")) {
+                ffmpeg_cmd = "./ffmpeg";
+            } else {
+                std::cerr << "[WARNING] ffmpeg が見つかりません。" << std::endl;
+            }
         }
         #endif
 
-        // FFmpegコマンド: NVENC ハードウェアエンコードを試行 (-c:v h264_nvenc)
-        std::string cmd_hw = ffmpeg_cmd + " -y -i \"" + video_no_audio + "\" -i \"" + original_video + 
-                          "\" -c:v h264_nvenc -preset p6 -cq 20 -c:a aac -map 0:v:0 -map 1:a:0? -shortest \"" + final_output + "\"";
+        std::string trim_input_args = "";
+        if (enable_trim) {
+            std::stringstream ss;
+            ss << " -ss " << trim_start << " -t " << trim_duration;
+            trim_input_args = ss.str();
+        }
+
+        // FFmpegコマンド: NVENC ハードウェアエンコードを試行 (サニタイズ済みのパスを使用)
+        std::string cmd_hw = ffmpeg_cmd + " -y -i \"" + s_no_audio + "\"" + trim_input_args + " -i \"" + s_original + 
+                          "\" -c:v h264_nvenc -preset p6 -cq 20 -c:a aac -map 0:v:0 -map 1:a:0? -shortest \"" + s_final + "\"";
         
         int ret = std::system(cmd_hw.c_str());
         if (ret != 0) {
             std::cout << "[INFO] Hardware encoding (NVENC) failed or unavailable. Falling back to libx264 software encoding." << std::endl;
-            // 失敗した場合は libx264 ソフトウェアエンコードにフォールバック
-            std::string cmd_sw = ffmpeg_cmd + " -y -i \"" + video_no_audio + "\" -i \"" + original_video + 
-                              "\" -c:v libx264 -crf 20 -preset fast -c:a aac -map 0:v:0 -map 1:a:0? -shortest \"" + final_output + "\"";
+            std::string cmd_sw = ffmpeg_cmd + " -y -i \"" + s_no_audio + "\"" + trim_input_args + " -i \"" + s_original + 
+                              "\" -c:v libx264 -crf 20 -preset fast -c:a aac -map 0:v:0 -map 1:a:0? -shortest \"" + s_final + "\"";
             ret = std::system(cmd_sw.c_str());
         }
         return (ret == 0);

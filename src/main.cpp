@@ -26,6 +26,8 @@ int main(int argc, char** argv) {
     // 自動ログ出力の設定
     std::freopen("latest_log.txt", "w", stdout);
     std::freopen("latest_log.txt", "a", stderr);
+    std::setvbuf(stdout, NULL, _IONBF, 0);
+    std::setvbuf(stderr, NULL, _IONBF, 0);
 
     std::cout << "--- OldVideo HDRemasterer AI - Session Started ---" << std::endl;
     std::cout << "--- 動画リマスターセッション開始 ---" << std::endl;
@@ -47,6 +49,7 @@ int main(int argc, char** argv) {
             ("m,models", "モデルディレクトリのパス / Path to models directory", cxxopts::value<std::string>()->default_value("models"))
             ("stab", "手ブレ補正を有効化 / Enable video stabilization", cxxopts::value<bool>()->default_value("false"))
             ("interp", "フレーム補間 (RIFE) を有効化 / Enable frame interpolation (RIFE)", cxxopts::value<bool>()->default_value("false"))
+            ("model_name", "モデル名 (例: realesr-animevideov3-x2) / Specific model name", cxxopts::value<std::string>()->default_value(""))
             ("h,help", "ヘルプを表示 / Show help");
 
         auto result = options.parse(argc, argv);
@@ -68,6 +71,7 @@ int main(int argc, char** argv) {
         config.scale = result["scale"].as<int>();
         config.tile_size = result["tile"].as<int>();
         config.model_dir = result["models"].as<std::string>();
+        config.model_name = result["model_name"].as<std::string>();
         config.enable_stabilization = result["stab"].as<bool>();
         config.enable_interpolation = result["interp"].as<bool>();
 

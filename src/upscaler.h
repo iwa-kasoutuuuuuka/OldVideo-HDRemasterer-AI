@@ -21,7 +21,7 @@ public:
      * @param tile_size Tile split size (0 for auto)
      * @return Success or failure
      */
-    bool load(const std::string& model_dir, int scale = 4, int tile_size = 0, bool use_fast_model = false);
+    bool load(const std::string& model_dir, int scale = 4, int tile_size = 0, const std::string& model_name = "");
 
     /**
      * @brief Upscale a frame

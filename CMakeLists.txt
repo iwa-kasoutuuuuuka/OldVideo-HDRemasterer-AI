@@ -1,4 +1,5 @@
 cmake_minimum_required(VERSION 3.10)
+set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
 project(OldVideoHDRemastererAI)
 
 set(CMAKE_CXX_STANDARD 17)
@@ -68,6 +69,7 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(ncnn)
 
 # OpenCV: Image and video processing (videostab は環境依存のため除外)
+set(OpenCV_DIR "F:/MovieAPP/HDRemaster/opencv_dev/opencv/build/x64/vc16/lib")
 find_package(OpenCV REQUIRED COMPONENTS core imgproc video videoio highgui)
 
 include_directories(${OpenCV_INCLUDE_DIRS})

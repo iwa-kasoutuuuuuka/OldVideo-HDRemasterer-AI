@@ -70,7 +70,17 @@ bool VideoProcessor::run(const Config& config) {
 
     if (config.progress_callback) config.progress_callback(0.05f, "AIモデルのロード中...");
     std::cout << "[RUN] Step 3: AIモデルロード中..." << std::endl << std::flush;
-    if (!upscaler.load(config.model_dir, config.scale, actual_tile_size, config.use_fast_model)) {
+    
+    std::string actual_model_name = config.model_name;
+    if (actual_model_name.empty()) {
+        if (config.use_fast_model) {
+            actual_model_name = "realesr-animevideov3-x" + std::to_string(config.scale);
+        } else {
+            actual_model_name = (config.scale == 2) ? "realesrgan-x2plus" : "realesrgan-x4plus";
+        }
+    }
+
+    if (!upscaler.load(config.model_dir, config.scale, actual_tile_size, actual_model_name)) {
         std::cerr << "[ERROR] AIモデルのロードに失敗しました" << std::endl << std::flush;
         return false;
     }
@@ -92,6 +102,28 @@ bool VideoProcessor::run(const Config& config) {
     // 4. フレーム処理ループ (最適化済み: 不要コピー・後処理を削除)
     cv::Mat frame, upscaled, prev_upscaled;
     int current_frame = 0;
+    int start_frame = 0;
+    int max_trim_frames = total_frames;
+
+    if (config.enable_trim) {
+        start_frame = static_cast<int>(config.trim_start_sec * fps);
+        max_trim_frames = static_cast<int>(config.trim_duration_sec * fps);
+        if (total_frames > 0 && start_frame >= total_frames) {
+            std::cerr << "[ERROR] トリミング開始位置が動画の長さを超えています。/ Trim start position exceeds video duration." << std::endl;
+            return false;
+        }
+        if (use_stabilizer) {
+            for (int i = 0; i < start_frame; ++i) {
+                stabilizer_svc.next_frame();
+            }
+        } else {
+            cap.set(cv::CAP_PROP_POS_MSEC, config.trim_start_sec * 1000.0);
+        }
+        std::cout << "[INFO] トリミング有効: 開始フレーム=" << start_frame << ", 最大処理フレーム数=" << max_trim_frames << std::endl;
+    }
+
+    int total_to_process = config.enable_trim ? std::min(total_frames - start_frame, max_trim_frames) : total_frames;
+    if (total_to_process <= 0) total_to_process = total_frames; // 安全策
 
     std::cout << "[INFO] 処理を開始します..." << std::endl;
     if (config.progress_callback) config.progress_callback(0.1f, "フレーム処理中...");
@@ -102,6 +134,12 @@ bool VideoProcessor::run(const Config& config) {
         // 中断チェック
         if (config.stop_flag && *config.stop_flag) {
             std::cout << "[INFO] ユーザーによって処理が中断されました。/ Processing interrupted by user." << std::endl;
+            break;
+        }
+
+        // トリミング終了判定
+        if (config.enable_trim && current_frame >= max_trim_frames) {
+            std::cout << "[INFO] 指定されたトリミング期間が終了しました。" << std::endl;
             break;
         }
 
@@ -144,17 +182,17 @@ bool VideoProcessor::run(const Config& config) {
         std::swap(prev_upscaled, upscaled);
         current_frame++;
 
-        if (total_frames > 0) {
+        if (total_to_process > 0) {
             auto now = std::chrono::steady_clock::now();
             double elapsed_sec = std::chrono::duration<double>(now - start_time).count();
             double fps_processing = current_frame / elapsed_sec;
-            double remaining_sec = (total_frames - current_frame) / std::max(fps_processing, 0.001);
+            double remaining_sec = (total_to_process - current_frame) / std::max(fps_processing, 0.001);
             
-            float p = 0.1f + 0.8f * ((float)current_frame / total_frames);
+            float p = 0.1f + 0.8f * ((float)current_frame / total_to_process);
             
             std::stringstream ss;
             ss << std::fixed << std::setprecision(1);
-            ss << "処理中: " << current_frame << "/" << total_frames << " フレーム"
+            ss << "処理中: " << current_frame << "/" << total_to_process << " フレーム"
                << " | " << fps_processing << " fps | 残り時間: ";
                
             int r_h = static_cast<int>(remaining_sec) / 3600;
@@ -163,7 +201,11 @@ bool VideoProcessor::run(const Config& config) {
             ss << std::setfill('0') << std::setw(2) << r_h << ":"
                << std::setw(2) << r_m << ":" << std::setw(2) << r_s;
                
-            if (config.progress_callback) config.progress_callback(p, ss.str());
+            if (config.progress_callback) {
+                config.progress_callback(p, ss.str());
+            } else {
+                std::cout << "\r" << ss.str() << std::flush;
+            }
         } else {
             std::cout << "\rProcessed frames: " << current_frame << std::flush;
         }
@@ -174,7 +216,7 @@ bool VideoProcessor::run(const Config& config) {
 
     // 5. 音声マージ
     if (config.progress_callback) config.progress_callback(0.95f, "音声のマージ中...");
-    bool merge_ok = utils::merge_audio(temp_video, config.input_path, config.output_path);
+    bool merge_ok = utils::merge_audio(temp_video, config.input_path, config.output_path, config.enable_trim, config.trim_start_sec, config.trim_duration_sec);
 
     if (merge_ok && fs::exists(temp_video)) {
         fs::remove(temp_video);

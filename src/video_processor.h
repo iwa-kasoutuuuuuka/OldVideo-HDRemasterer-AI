@@ -19,10 +19,16 @@ public:
         int scale = 4;
         int tile_size = 0;
         std::string model_dir = "models";
+        std::string model_name; // 空の場合はuse_fast_modelから自動判定
         bool enable_stabilization = false;
         bool enable_interpolation = false;
         bool use_fast_model = false;  // true: 軽量モデル (animevideov3, 高速), false: 高品質モデル (x4plus)
         int num_gpus = 1;
+
+        // トリミング（部分処理）用
+        bool enable_trim = false;
+        double trim_start_sec = 0.0;
+        double trim_duration_sec = 10.0;
 
         // 進捗通知用コールバック: float progress (0.0-1.0), string message
         std::function<void(float, std::string)> progress_callback = nullptr;

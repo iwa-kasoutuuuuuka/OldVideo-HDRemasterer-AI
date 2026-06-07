@@ -31,3 +31,6 @@ models/*.param
 Thumbs.db
 vulkansdk-windows-X64-1.4.341.1.exe
 *.exe
+
+# Video files (test/temporary)
+*.mp4

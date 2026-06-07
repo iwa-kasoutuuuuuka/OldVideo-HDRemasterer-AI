@@ -7,19 +7,9 @@
 #include "cpu.h"
 
 Interpolator::Interpolator() : gpudevice(false), is_flownet(false), gpu_index(-1) {
-    // GPU 自動選択
-    gpu_index = utils::get_preferred_gpu_index();
-    if (gpu_index >= 0) {
-        gpudevice = true;
-        // ncnn 高速化オプション
-        rife.opt.use_vulkan_compute = true;
-        rife.opt.use_fp16_packed = true;
-        rife.opt.use_fp16_storage = true;
-        rife.opt.use_fp16_arithmetic = true;
-        rife.opt.use_int8_storage = true;
-        rife.opt.use_shader_pack8 = true;
-        rife.opt.use_image_storage = true;
-    }
+    // RIFE は CPU で動作させて VRAM 枯渇を防ぐ
+    gpudevice = false;
+    
     // CPU スレッド数の最適化
     rife.opt.num_threads = ncnn::get_cpu_count();
     
@@ -104,12 +94,13 @@ bool Interpolator::process(const cv::Mat& f1, const cv::Mat& f2, cv::Mat& out, f
         ncnn::Mat n_out;
         int ret = ex.extract(out_name.c_str(), n_out);
         
-        if (ret != 0 && gpudevice) {
-            if (switch_to_cpu()) return process(f1, f2, out, timestep);
+        if (ret != 0) {
+            if (gpudevice && switch_to_cpu()) return process(f1, f2, out, timestep);
+            return false;
         }
         
         n_out.to_pixels(out.data, ncnn::Mat::PIXEL_BGR);
-        return (ret == 0);
+        return true;
     }
 
     // Tiled processing for RIFE
@@ -121,8 +112,8 @@ bool Interpolator::process(const cv::Mat& f1, const cv::Mat& f2, cv::Mat& out, f
             int x1 = std::min(x + tile_size + padding, w);
             int y1 = std::min(y + tile_size + padding, h);
 
-            cv::Mat t1 = f1(cv::Range(y0, y1), cv::Range(x0, x1));
-            cv::Mat t2 = f2(cv::Range(y0, y1), cv::Range(x0, x1));
+            cv::Mat t1 = f1(cv::Range(y0, y1), cv::Range(x0, x1)).clone();
+            cv::Mat t2 = f2(cv::Range(y0, y1), cv::Range(x0, x1)).clone();
 
             ncnn::Mat nt1 = ncnn::Mat::from_pixels(t1.data, ncnn::Mat::PIXEL_BGR, t1.cols, t1.rows);
             ncnn::Mat nt2 = ncnn::Mat::from_pixels(t2.data, ncnn::Mat::PIXEL_BGR, t2.cols, t2.rows);
@@ -135,9 +126,9 @@ bool Interpolator::process(const cv::Mat& f1, const cv::Mat& f2, cv::Mat& out, f
             ncnn::Mat nt_out;
             int ret = ex.extract(out_name.c_str(), nt_out);
 
-            if (ret != 0 && gpudevice) {
-                if (switch_to_cpu()) return process(f1, f2, out, timestep);
-                else return false;
+            if (ret != 0) {
+                if (gpudevice && switch_to_cpu()) return process(f1, f2, out, timestep);
+                return false;
             }
 
             cv::Mat t_out(nt_out.h, nt_out.w, CV_8UC3);

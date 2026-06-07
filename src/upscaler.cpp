@@ -27,25 +27,20 @@ Upscaler::~Upscaler() {
     net.clear();
 }
 
-bool Upscaler::load(const std::string& model_dir, int _scale, int _tile_size, bool use_fast_model) {
+bool Upscaler::load(const std::string& model_dir, int _scale, int _tile_size, const std::string& _model_name) {
     this->scale = _scale;
     this->tile_size = _tile_size;
 
-    // モデル選択: 高速モデル (animevideov3) / 高品質モデル (x4plus)
-    std::string model_name;
-    if (use_fast_model) {
-        // 軽量モデル: 約1.2MB、高速処理
+    std::string model_name = _model_name;
+    if (model_name.empty()) {
+        // デフォルト: アニメモデルをフォールバックとして使用
         model_name = "realesr-animevideov3-x" + std::to_string(scale);
-    } else {
-        // 高品質モデル: 約33MB、最高画質
-        if (scale == 2) model_name = "realesrgan-x2plus";
-        else model_name = "realesrgan-x4plus";
     }
 
     model_param = model_dir + "/" + model_name + ".param";
     model_bin = model_dir + "/" + model_name + ".bin";
     
-    std::cout << "[INFO] AIモデル: " << model_name << (use_fast_model ? " (高速)" : " (高品質)") << std::endl;
+    std::cout << "[INFO] AIモデル: " << model_name << std::endl;
 
     if (gpudevice) {
         net.set_vulkan_device(gpu_index);
@@ -92,12 +87,13 @@ bool Upscaler::process(const cv::Mat& in, cv::Mat& out) {
         ncnn::Mat n_out;
         int ret = ex.extract("output", n_out);
         
-        if (ret != 0 && gpudevice) {
-            if (switch_to_cpu()) return process(in, out);
+        if (ret != 0) {
+            if (gpudevice && switch_to_cpu()) return process(in, out);
+            return false;
         }
         
         n_out.to_pixels(out.data, ncnn::Mat::PIXEL_BGR);
-        return (ret == 0);
+        return true;
     }
 
     // Tiled processing for VRAM conservation
@@ -112,7 +108,7 @@ bool Upscaler::process(const cv::Mat& in, cv::Mat& out) {
             int x1 = std::min(x + tile_w + padding, w);
             int y1 = std::min(y + tile_h + padding, h);
 
-            cv::Mat tile_in = in(cv::Range(y0, y1), cv::Range(x0, x1));
+            cv::Mat tile_in = in(cv::Range(y0, y1), cv::Range(x0, x1)).clone();
             ncnn::Mat n_tile_in = ncnn::Mat::from_pixels(tile_in.data, ncnn::Mat::PIXEL_BGR, tile_in.cols, tile_in.rows);
 
             ncnn::Extractor ex = net.create_extractor();
@@ -120,9 +116,9 @@ bool Upscaler::process(const cv::Mat& in, cv::Mat& out) {
             ncnn::Mat n_tile_out;
             int ret = ex.extract("output", n_tile_out);
 
-            if (ret != 0 && gpudevice) {
-                if (switch_to_cpu()) return process(in, out);
-                else return false;
+            if (ret != 0) {
+                if (gpudevice && switch_to_cpu()) return process(in, out);
+                return false;
             }
 
             cv::Mat tile_out(n_tile_out.h, n_tile_out.w, CV_8UC3);

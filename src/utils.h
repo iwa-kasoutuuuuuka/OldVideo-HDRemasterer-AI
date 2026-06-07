@@ -27,9 +27,19 @@ namespace utils {
     void enhance_frame(const cv::Mat& input, cv::Mat& output);
 
     /**
-     * @brief FFmpeg を使用して音声付き動画を作成
+     * @brief パス文字列のサニタイズ（コマンドインジェクション対策）
      */
-    bool merge_audio(const std::string& video_no_audio, const std::string& original_video, const std::string& final_output);
+    std::string sanitize_path(const std::string& path);
+
+    /**
+     * @brief FFmpeg の存在を確認
+     */
+    bool check_ffmpeg_available();
+
+    /**
+     * @brief FFmpeg を使用して音声付き動画を作成 (トリミング対応)
+     */
+    bool merge_audio(const std::string& video_no_audio, const std::string& original_video, const std::string& final_output, bool enable_trim = false, double trim_start = 0.0, double trim_duration = 0.0);
 
     /**
      * @brief 進捗表示

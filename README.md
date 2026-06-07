@@ -13,6 +13,12 @@ A powerful video remastering tool that integrates AI upscaling (Real-ESRGAN), fr
 - **フレーム補間 (RIFE) / Frame Interpolation (RIFE)**: 24/30fps の動画を 60fps などへ滑らかに変換。 / Smoothly convert 24/30fps videos to 60fps or more.
 - **手ブレ補正 / Video Stabilization**: OpenCV による高度な安定化処理。 / Advanced stabilization processing using OpenCV.
 - **マルチ言語対応 / Multilingual Support**: 日本語と英語の表示切替に対応。 / Supports switching between Japanese and English.
+- **バッチ処理 / Batch Processing**: 複数の動画タスクを一括登録し、連続自動リマスターが可能。 / Queue and process multiple video files sequentially.
+- **比較プレビュー / Before-After Split Preview**: 境界をスライドできるスリットスライダーで、画質向上効果をリアルタイムで直接比較可能。 / Real-time split-screen slider to compare before and after remastered frames directly.
+- **部分処理 / Trim & Preview**: 開始位置と秒数を指定して、特定区間のみの部分テスト処理が可能。 / Remaster a specific duration (start/length) for fast previewing.
+- **FFmpeg 自動配置 / Auto FFmpeg Installer**: 音声マージに不可欠な FFmpeg をワンクリックで自動ダウンロード・配置。 / One-click tool to auto-download and configure FFmpeg.
+- **GPU+CPU ハイブリッド処理 / GPU+CPU Hybrid Processing**: AI超解像をGPUで、フレーム補間をCPUで動作させ、低VRAM（4GB等）環境でのクラッシュを防止。 / Runs AI upscaling on GPU and frame interpolation on CPU to prevent crashes in low-VRAM (e.g. 4GB) environments.
+- **セキュリティと堅牢性 / Security & Robustness**: コマンドインジェクション対策のサニタイズ強化、Use-After-Free脆弱性の解消、NaNデータ安全フォールバックの搭載。 / Enhanced shell path sanitization, fixed Use-After-Free thread issues, and added NaN/Inf safety fallbacks for maximum system robustness.
 
 ## 推奨される入力動画の仕様 / Recommended Input Specifications
 
