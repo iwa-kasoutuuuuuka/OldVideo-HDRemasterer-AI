@@ -7,7 +7,7 @@
 #include "cpu.h"
 
 Interpolator::Interpolator() : gpudevice(false), is_flownet(false), gpu_index(-1) {
-    // RIFE は CPU で動作させて VRAM 枯渇を防ぐ
+    // RIFE は CPU で動作させて VRAM 枯渇および Vulkan 最大サイズ制限エラーを防ぐ
     gpudevice = false;
     
     // CPU スレッド数の最適化
@@ -83,23 +83,27 @@ bool Interpolator::process(const cv::Mat& f1, const cv::Mat& f2, cv::Mat& out, f
     int tile_size = 512;
 
     if (w <= tile_size && h <= tile_size) {
-        ncnn::Mat n_f1 = ncnn::Mat::from_pixels(f1.data, ncnn::Mat::PIXEL_BGR, w, h);
-        ncnn::Mat n_f2 = ncnn::Mat::from_pixels(f2.data, ncnn::Mat::PIXEL_BGR, w, h);
+        int ret = 0;
+        {
+            ncnn::Mat n_f1 = ncnn::Mat::from_pixels(f1.data, ncnn::Mat::PIXEL_BGR, w, h);
+            ncnn::Mat n_f2 = ncnn::Mat::from_pixels(f2.data, ncnn::Mat::PIXEL_BGR, w, h);
 
-        ncnn::Extractor ex = rife.create_extractor();
-        ex.input(in0_name.c_str(), n_f1);
-        ex.input(in1_name.c_str(), n_f2);
-        if (!in2_name.empty()) ex.input(in2_name.c_str(), n_timestep);
-        
-        ncnn::Mat n_out;
-        int ret = ex.extract(out_name.c_str(), n_out);
+            ncnn::Extractor ex = rife.create_extractor();
+            ex.input(in0_name.c_str(), n_f1);
+            ex.input(in1_name.c_str(), n_f2);
+            if (!in2_name.empty()) ex.input(in2_name.c_str(), n_timestep);
+            
+            ncnn::Mat n_out;
+            ret = ex.extract(out_name.c_str(), n_out);
+            if (ret == 0) {
+                n_out.to_pixels(out.data, ncnn::Mat::PIXEL_BGR);
+            }
+        }
         
         if (ret != 0) {
             if (gpudevice && switch_to_cpu()) return process(f1, f2, out, timestep);
             return false;
         }
-        
-        n_out.to_pixels(out.data, ncnn::Mat::PIXEL_BGR);
         return true;
     }
 
@@ -114,25 +118,30 @@ bool Interpolator::process(const cv::Mat& f1, const cv::Mat& f2, cv::Mat& out, f
 
             cv::Mat t1 = f1(cv::Range(y0, y1), cv::Range(x0, x1)).clone();
             cv::Mat t2 = f2(cv::Range(y0, y1), cv::Range(x0, x1)).clone();
+            int ret = 0;
+            cv::Mat t_out;
+            {
+                ncnn::Mat nt1 = ncnn::Mat::from_pixels(t1.data, ncnn::Mat::PIXEL_BGR, t1.cols, t1.rows);
+                ncnn::Mat nt2 = ncnn::Mat::from_pixels(t2.data, ncnn::Mat::PIXEL_BGR, t2.cols, t2.rows);
 
-            ncnn::Mat nt1 = ncnn::Mat::from_pixels(t1.data, ncnn::Mat::PIXEL_BGR, t1.cols, t1.rows);
-            ncnn::Mat nt2 = ncnn::Mat::from_pixels(t2.data, ncnn::Mat::PIXEL_BGR, t2.cols, t2.rows);
+                ncnn::Extractor ex = rife.create_extractor();
+                ex.input(in0_name.c_str(), nt1);
+                ex.input(in1_name.c_str(), nt2);
+                if (!in2_name.empty()) ex.input(in2_name.c_str(), n_timestep);
+                
+                ncnn::Mat nt_out;
+                ret = ex.extract(out_name.c_str(), nt_out);
 
-            ncnn::Extractor ex = rife.create_extractor();
-            ex.input(in0_name.c_str(), nt1);
-            ex.input(in1_name.c_str(), nt2);
-            if (!in2_name.empty()) ex.input(in2_name.c_str(), n_timestep);
-            
-            ncnn::Mat nt_out;
-            int ret = ex.extract(out_name.c_str(), nt_out);
+                if (ret == 0) {
+                    t_out.create(nt_out.h, nt_out.w, CV_8UC3);
+                    nt_out.to_pixels(t_out.data, ncnn::Mat::PIXEL_BGR);
+                }
+            }
 
             if (ret != 0) {
                 if (gpudevice && switch_to_cpu()) return process(f1, f2, out, timestep);
                 return false;
             }
-
-            cv::Mat t_out(nt_out.h, nt_out.w, CV_8UC3);
-            nt_out.to_pixels(t_out.data, ncnn::Mat::PIXEL_BGR);
 
             int target_w = std::min(tile_size, w - x);
             int target_h = std::min(tile_size, h - y);

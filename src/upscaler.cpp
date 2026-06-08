@@ -81,18 +81,22 @@ bool Upscaler::process(const cv::Mat& in, cv::Mat& out) {
 
     // Full image processing
     if (tile_size <= 0 || (tile_size >= w && tile_size >= h)) {
-        ncnn::Mat n_in = ncnn::Mat::from_pixels(in.data, ncnn::Mat::PIXEL_BGR, w, h);
-        ncnn::Extractor ex = net.create_extractor();
-        ex.input("data", n_in);
-        ncnn::Mat n_out;
-        int ret = ex.extract("output", n_out);
+        int ret = 0;
+        {
+            ncnn::Mat n_in = ncnn::Mat::from_pixels(in.data, ncnn::Mat::PIXEL_BGR, w, h);
+            ncnn::Extractor ex = net.create_extractor();
+            ex.input("data", n_in);
+            ncnn::Mat n_out;
+            ret = ex.extract("output", n_out);
+            if (ret == 0) {
+                n_out.to_pixels(out.data, ncnn::Mat::PIXEL_BGR);
+            }
+        }
         
         if (ret != 0) {
             if (gpudevice && switch_to_cpu()) return process(in, out);
             return false;
         }
-        
-        n_out.to_pixels(out.data, ncnn::Mat::PIXEL_BGR);
         return true;
     }
 
@@ -109,20 +113,25 @@ bool Upscaler::process(const cv::Mat& in, cv::Mat& out) {
             int y1 = std::min(y + tile_h + padding, h);
 
             cv::Mat tile_in = in(cv::Range(y0, y1), cv::Range(x0, x1)).clone();
-            ncnn::Mat n_tile_in = ncnn::Mat::from_pixels(tile_in.data, ncnn::Mat::PIXEL_BGR, tile_in.cols, tile_in.rows);
+            int ret = 0;
+            cv::Mat tile_out;
+            {
+                ncnn::Mat n_tile_in = ncnn::Mat::from_pixels(tile_in.data, ncnn::Mat::PIXEL_BGR, tile_in.cols, tile_in.rows);
+                ncnn::Extractor ex = net.create_extractor();
+                ex.input("data", n_tile_in);
+                ncnn::Mat n_tile_out;
+                ret = ex.extract("output", n_tile_out);
 
-            ncnn::Extractor ex = net.create_extractor();
-            ex.input("data", n_tile_in);
-            ncnn::Mat n_tile_out;
-            int ret = ex.extract("output", n_tile_out);
+                if (ret == 0) {
+                    tile_out.create(n_tile_out.h, n_tile_out.w, CV_8UC3);
+                    n_tile_out.to_pixels(tile_out.data, ncnn::Mat::PIXEL_BGR);
+                }
+            }
 
             if (ret != 0) {
                 if (gpudevice && switch_to_cpu()) return process(in, out);
                 return false;
             }
-
-            cv::Mat tile_out(n_tile_out.h, n_tile_out.w, CV_8UC3);
-            n_tile_out.to_pixels(tile_out.data, ncnn::Mat::PIXEL_BGR);
 
             int target_x = x * scale;
             int target_y = y * scale;
