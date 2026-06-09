@@ -116,13 +116,12 @@ bool Interpolator::process(const cv::Mat& f1, const cv::Mat& f2, cv::Mat& out, f
             int x1 = std::min(x + tile_size + padding, w);
             int y1 = std::min(y + tile_size + padding, h);
 
-            cv::Mat t1 = f1(cv::Range(y0, y1), cv::Range(x0, x1)).clone();
-            cv::Mat t2 = f2(cv::Range(y0, y1), cv::Range(x0, x1)).clone();
+            f1(cv::Range(y0, y1), cv::Range(x0, x1)).copyTo(tile_f1);
+            f2(cv::Range(y0, y1), cv::Range(x0, x1)).copyTo(tile_f2);
             int ret = 0;
-            cv::Mat t_out;
             {
-                ncnn::Mat nt1 = ncnn::Mat::from_pixels(t1.data, ncnn::Mat::PIXEL_BGR, t1.cols, t1.rows);
-                ncnn::Mat nt2 = ncnn::Mat::from_pixels(t2.data, ncnn::Mat::PIXEL_BGR, t2.cols, t2.rows);
+                ncnn::Mat nt1 = ncnn::Mat::from_pixels(tile_f1.data, ncnn::Mat::PIXEL_BGR, tile_f1.cols, tile_f1.rows);
+                ncnn::Mat nt2 = ncnn::Mat::from_pixels(tile_f2.data, ncnn::Mat::PIXEL_BGR, tile_f2.cols, tile_f2.rows);
 
                 ncnn::Extractor ex = rife.create_extractor();
                 ex.input(in0_name.c_str(), nt1);
@@ -133,8 +132,8 @@ bool Interpolator::process(const cv::Mat& f1, const cv::Mat& f2, cv::Mat& out, f
                 ret = ex.extract(out_name.c_str(), nt_out);
 
                 if (ret == 0) {
-                    t_out.create(nt_out.h, nt_out.w, CV_8UC3);
-                    nt_out.to_pixels(t_out.data, ncnn::Mat::PIXEL_BGR);
+                    tile_out.create(nt_out.h, nt_out.w, CV_8UC3);
+                    nt_out.to_pixels(tile_out.data, ncnn::Mat::PIXEL_BGR);
                 }
             }
 
@@ -148,7 +147,7 @@ bool Interpolator::process(const cv::Mat& f1, const cv::Mat& f2, cv::Mat& out, f
             int src_x = x - x0;
             int src_y = y - y0;
 
-            t_out(cv::Range(src_y, src_y + target_h), cv::Range(src_x, src_x + target_w))
+            tile_out(cv::Range(src_y, src_y + target_h), cv::Range(src_x, src_x + target_w))
                 .copyTo(out(cv::Range(y, y + target_h), cv::Range(x, x + target_w)));
         }
     }

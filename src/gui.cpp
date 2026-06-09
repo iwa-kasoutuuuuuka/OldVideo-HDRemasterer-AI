@@ -69,7 +69,9 @@ int GUIManager::run() {
     SetUnhandledExceptionFilter(crashHandler);
 #endif
 
-    NFD::Init();
+    if (NFD::Init() != NFD_OKAY) {
+        std::cerr << "[WARNING] NFD 初期化失敗。ファイルダイアログが使用できない可能性があります。" << std::endl << std::flush;
+    }
     std::cout << "[GUI] NFD 初期化完了" << std::endl << std::flush;
 
     Localization& loc = Localization::getInstance();
@@ -118,7 +120,7 @@ int GUIManager::run() {
     // スレッド同期用
     std::mutex gui_mtx;
     std::atomic<bool> processing{false};
-    bool should_stop{false};
+    std::atomic<bool> should_stop{false};
     std::atomic<float> progress{0.0f};
     std::string status_msg = loc.s().status_idle;
     std::string current_operation = "";
@@ -250,7 +252,7 @@ int GUIManager::run() {
                             int size_needed = WideCharToMultiByte(CP_UTF8, 0, outPath, -1, NULL, 0, NULL, NULL);
                             std::string conv(size_needed, 0);
                             WideCharToMultiByte(CP_UTF8, 0, outPath, -1, &conv[0], size_needed, NULL, NULL);
-                            conv.erase(conv.find('\0'));
+                            { auto pos = conv.find('\0'); if (pos != std::string::npos) conv.erase(pos); }
                             #else
                             std::string conv(outPath);
                             #endif
@@ -278,7 +280,7 @@ int GUIManager::run() {
                             int size_needed = WideCharToMultiByte(CP_UTF8, 0, outPath, -1, NULL, 0, NULL, NULL);
                             std::string conv(size_needed, 0);
                             WideCharToMultiByte(CP_UTF8, 0, outPath, -1, &conv[0], size_needed, NULL, NULL);
-                            conv.erase(conv.find('\0'));
+                            { auto pos = conv.find('\0'); if (pos != std::string::npos) conv.erase(pos); }
                             #else
                             std::string conv(outPath);
                             #endif
@@ -340,7 +342,10 @@ int GUIManager::run() {
                             should_stop = false;
                             config.stop_flag = &should_stop;
                             progress = 0.0f;
-                            status_msg = "Processing...";
+                            {
+                                std::lock_guard<std::mutex> lk(gui_mtx);
+                                status_msg = "Processing...";
+                            }
 
                             if (worker.joinable()) worker.join();
                             worker = std::thread([&, config]() mutable {
@@ -385,7 +390,7 @@ int GUIManager::run() {
                             int size_needed = WideCharToMultiByte(CP_UTF8, 0, outPath, -1, NULL, 0, NULL, NULL);
                             std::string conv(size_needed, 0);
                             WideCharToMultiByte(CP_UTF8, 0, outPath, -1, &conv[0], size_needed, NULL, NULL);
-                            conv.erase(conv.find('\0'));
+                            { auto pos = conv.find('\0'); if (pos != std::string::npos) conv.erase(pos); }
                             #else
                             std::string conv(outPath);
                             #endif
@@ -406,7 +411,7 @@ int GUIManager::run() {
                             int size_needed = WideCharToMultiByte(CP_UTF8, 0, outPath, -1, NULL, 0, NULL, NULL);
                             std::string conv(size_needed, 0);
                             WideCharToMultiByte(CP_UTF8, 0, outPath, -1, &conv[0], size_needed, NULL, NULL);
-                            conv.erase(conv.find('\0'));
+                            { auto pos = conv.find('\0'); if (pos != std::string::npos) conv.erase(pos); }
                             #else
                             std::string conv(outPath);
                             #endif
@@ -468,7 +473,10 @@ int GUIManager::run() {
                         processing = true;
                         should_stop = false;
                         progress = 0.0f;
-                        status_msg = "Processing batch...";
+                        {
+                            std::lock_guard<std::mutex> lk(gui_mtx);
+                            status_msg = "Processing batch...";
+                        }
 
                         if (worker.joinable()) worker.join();
                         worker = std::thread([&, batch_queue]() {
@@ -526,7 +534,7 @@ int GUIManager::run() {
                         }
                     }
 
-                    ImGui::SliderInt("表示フレーム指定 / Target Frame", &preview_frame_idx, 0, preview_total_frames - 1);
+                    ImGui::SliderInt("表示フレーム指定 / Target Frame", &preview_frame_idx, 0, std::max(preview_total_frames - 1, 0));
                     ImGui::SliderFloat("比較位置スライダー / Split Slider", &split_ratio, 0.0f, 1.0f);
 
                     ImGui::BeginDisabled(generating_preview);

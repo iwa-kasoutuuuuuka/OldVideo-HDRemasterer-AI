@@ -2,6 +2,7 @@
 #define VIDEO_PROCESSOR_H
 
 #include <string>
+#include <atomic>
 #include <functional>
 #include "upscaler.h"
 
@@ -34,7 +35,7 @@ public:
         std::function<void(float, std::string)> progress_callback = nullptr;
         
         // 中断フラグへのポインタ (true になると処理を中止)
-        bool* stop_flag = nullptr;
+        std::atomic<bool>* stop_flag = nullptr;
     };
 
     VideoProcessor();

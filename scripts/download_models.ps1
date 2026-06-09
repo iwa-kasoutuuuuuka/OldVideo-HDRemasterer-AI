@@ -1,5 +1,5 @@
 # Real-ESRGAN & RIFE Model Download Script (PowerShell Native)
-$ProjectDir = $PSScriptRoot
+$ProjectDir = Resolve-Path "$PSScriptRoot\.."
 $ModelDir = Join-Path $ProjectDir "models"
 $TempZip = Join-Path $ProjectDir "temp.zip"
 $ExtractDir = Join-Path $ProjectDir "temp_extract"

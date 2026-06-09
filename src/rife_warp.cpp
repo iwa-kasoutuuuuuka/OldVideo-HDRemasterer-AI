@@ -10,8 +10,16 @@ Warp::Warp()
 
 int Warp::forward(const std::vector<ncnn::Mat>& bottom_blobs, std::vector<ncnn::Mat>& top_blobs, const ncnn::Option& opt) const
 {
+    // 入力検証: 不正なブロブ数の場合は早期リターン
+    if (bottom_blobs.size() < 2 || top_blobs.size() < 1)
+        return -1;
+
     ncnn::Mat image = bottom_blobs[0];
     ncnn::Mat flow = bottom_blobs[1];
+
+    // flowは最低2チャネル (x, y) が必要
+    if (flow.c < 2)
+        return -1;
 
     if (image.elemsize != 4)
     {

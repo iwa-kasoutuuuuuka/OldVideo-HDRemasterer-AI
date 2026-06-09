@@ -42,6 +42,10 @@ private:
     
     std::string model_param;
     std::string model_bin;
+
+    // タイル処理用キャッシュバッファ（メモリ再確保削減用）
+    cv::Mat tile_in;
+    cv::Mat tile_out;
 };
 
 #endif // UPSCALER_H

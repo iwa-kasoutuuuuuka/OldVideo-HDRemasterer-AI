@@ -1,5 +1,8 @@
 #ifdef _WIN32
 #include <windows.h>
+#include <io.h>
+#else
+#include <unistd.h>
 #endif
 #include <iostream>
 #include <cstdio>
@@ -23,9 +26,22 @@ int main(int argc, char** argv) {
         return -1;
     }
 
-    // 自動ログ出力の設定
-    std::freopen("latest_log.txt", "w", stdout);
-    std::freopen("latest_log.txt", "a", stderr);
+    // 自動ログ出力の設定 (上書き競合を防ぐため、stdout を freopen した後 _dup2 で stderr に複製する)
+    {
+        FILE* tmp = std::fopen("latest_log.txt", "w");
+        if (tmp) std::fclose(tmp);
+    }
+    FILE* f_out = std::freopen("latest_log.txt", "a", stdout);
+    if (f_out) {
+#ifdef _WIN32
+        _dup2(_fileno(stdout), _fileno(stderr));
+#else
+        dup2(fileno(stdout), fileno(stderr));
+#endif
+    } else {
+        // ログファイルを開けない場合でも処理は続行
+        std::cerr << "[WARNING] ログファイルのオープンに失敗しました。" << std::endl;
+    }
     std::setvbuf(stdout, NULL, _IONBF, 0);
     std::setvbuf(stderr, NULL, _IONBF, 0);
 
@@ -35,7 +51,9 @@ int main(int argc, char** argv) {
     // Priority: Run GUI if no arguments are provided
     if (argc <= 1) {
         std::cout << "[INFO] 引数が指定されていません。GUIモードを開始します... / No arguments provided. Starting GUI mode..." << std::endl;
-        return GUIManager::run();
+        int gui_ret = GUIManager::run();
+        ncnn::destroy_gpu_instance();
+        return gui_ret;
     }
 
     try {
@@ -94,6 +112,9 @@ int main(int argc, char** argv) {
         return -1;
     } catch (const std::exception& e) {
         std::cerr << "[ERROR] 予期せぬエラーが発生しました: " << e.what() << " / An unexpected error occurred." << std::endl;
+        ncnn::destroy_gpu_instance();
         return -1;
     }
+
+    ncnn::destroy_gpu_instance();
 }

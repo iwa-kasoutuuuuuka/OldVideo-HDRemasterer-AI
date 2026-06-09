@@ -37,19 +37,21 @@ A powerful video remastering tool that integrates AI upscaling (Real-ESRGAN), fr
 - **Tools**:
   - CMake (3.10+)
   - C++ Compiler (Visual Studio 2019/2022 recommended)
-  - OpenCV (videostab module required)
-  - FFmpeg (Must be in PATH)
+  - OpenCV (core, imgproc, video, videoio, highgui)
+  - FFmpeg (自動ダウンロード機能搭載 / Built-in auto-download available)
 
 ## セットアップ手順 / Setup Instructions
 
 ### 1. ビルド環境の構築 / Build Environment Setup
 
-依存ライブラリは `vcpkg` で管理することを推奨します。 / We recommend using `vcpkg` to manage dependencies.
+依存ライブラリの多くは CMake FetchContent で自動取得されます。OpenCV のみ事前インストールが必要です。 / Most dependencies are auto-fetched via CMake FetchContent. Only OpenCV needs manual installation.
 
 ```powershell
-# vcpkg で必要なライブラリをインストール / Install required libraries via vcpkg
-vcpkg install opencv4[ffmpeg,videostab,world] ncnn cxxopts vulkan glfw3 imgui[opengl3-binding,glfw-binding] --triplet x64-windows
+# OpenCV のインストール（vcpkg 使用時の例）/ Install OpenCV (example using vcpkg)
+vcpkg install opencv4[ffmpeg,world] --triplet x64-windows
 ```
+
+> **Note**: ncnn, cxxopts, GLFW, ImGui, NFD は CMake ビルド時に FetchContent で自動ダウンロードされます。 / ncnn, cxxopts, GLFW, ImGui, and NFD are automatically fetched during the CMake build.
 
 ### 2. モデルのダウンロード / Downloading Models
 
@@ -69,13 +71,13 @@ cmake --build build --config Release
 ### GUI モード (推奨) / GUI Mode (Recommended)
 引数なしで実行ファイルを起動してください。 / Run the executable without arguments.
 ```bash
-./OldVideoHDRemasterer_CPP.exe
+./OldVideoHDRemastererAI.exe
 ```
 
 ### CLI モード / CLI Mode
 コマンドラインから自動化を行う場合に使用します。 / Use for automation from the command line.
 ```bash
-./OldVideoHDRemasterer_CPP --input input.mp4 --output output.mp4 --scale 4 --interp --stab
+./OldVideoHDRemastererAI --input input.mp4 --output output.mp4 --scale 4 --interp --stab
 ```
 
 ## 外部ソフトウェアとライブラリ / External Software & Libraries

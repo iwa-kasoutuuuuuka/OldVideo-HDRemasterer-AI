@@ -17,7 +17,7 @@ Upscaler::Upscaler() : scale(4), tile_size(0), gpudevice(false), gpu_index(-1) {
         net.opt.use_fp16_arithmetic = true;
         net.opt.use_int8_storage = true;
         net.opt.use_shader_pack8 = true;
-        net.opt.use_image_storage = true;
+        net.opt.use_image_storage = false; // Vulkan最大次元(16384等)エラー回避のためfalse
     }
     // CPU スレッド数の最適化
     net.opt.num_threads = ncnn::get_cpu_count();
@@ -78,6 +78,10 @@ bool Upscaler::process(const cv::Mat& in, cv::Mat& out) {
     int out_w = w * scale;
     int out_h = h * scale;
     out.create(out_h, out_w, CV_8UC3);
+    if (out.empty()) {
+        std::cerr << "[ERROR] 出力バッファのメモリ確保に失敗しました (" << out_w << "x" << out_h << ")" << std::endl;
+        return false;
+    }
 
     // Full image processing
     if (tile_size <= 0 || (tile_size >= w && tile_size >= h)) {
@@ -89,7 +93,13 @@ bool Upscaler::process(const cv::Mat& in, cv::Mat& out) {
             ncnn::Mat n_out;
             ret = ex.extract("output", n_out);
             if (ret == 0) {
-                n_out.to_pixels(out.data, ncnn::Mat::PIXEL_BGR);
+                // ncnn出力サイズの検証（バッファオーバーフロー防止）
+                if (n_out.w != out_w || n_out.h != out_h) {
+                    std::cerr << "[ERROR] ncnn出力サイズ不一致: 期待=" << out_w << "x" << out_h << ", 実際=" << n_out.w << "x" << n_out.h << std::endl;
+                    ret = -1;
+                } else {
+                    n_out.to_pixels(out.data, ncnn::Mat::PIXEL_BGR);
+                }
             }
         }
         
@@ -112,9 +122,8 @@ bool Upscaler::process(const cv::Mat& in, cv::Mat& out) {
             int x1 = std::min(x + tile_w + padding, w);
             int y1 = std::min(y + tile_h + padding, h);
 
-            cv::Mat tile_in = in(cv::Range(y0, y1), cv::Range(x0, x1)).clone();
+            in(cv::Range(y0, y1), cv::Range(x0, x1)).copyTo(tile_in);
             int ret = 0;
-            cv::Mat tile_out;
             {
                 ncnn::Mat n_tile_in = ncnn::Mat::from_pixels(tile_in.data, ncnn::Mat::PIXEL_BGR, tile_in.cols, tile_in.rows);
                 ncnn::Extractor ex = net.create_extractor();

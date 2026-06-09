@@ -5,7 +5,10 @@
 #include <filesystem>
 #include <sstream>
 #include <algorithm>
+#include "net.h"
 #include "gpu.h"
+#include <string>
+#include <algorithm>
 
 namespace utils {
 
@@ -14,11 +17,50 @@ namespace utils {
         if (count == 0) return -1;
         if (count == 1) return 0;
         
-        // 複数 GPU がある場合、最後のデバイス（通常ディスクリート GPU）を優先
-        // Intel 内蔵 GPU はインデックス 0 に列挙されることが多い
-        int preferred = count - 1;
-        std::cout << "[INFO] GPU " << count << " 台検出。デバイス " << preferred << " を使用します。" << std::endl;
-        return preferred;
+        int best_idx = 0;
+        int best_score = -1;
+        
+        for (int i = 0; i < count; i++) {
+            const auto* device = ncnn::get_gpu_device(i);
+            if (!device) continue;
+            
+            const auto& info = device->info;
+            std::string name = info.device_name();
+            std::transform(name.begin(), name.end(), name.begin(), ::tolower);
+            
+            int score = 0;
+            // デバイスタイプ判定 (Discrete GPU優先: type 0)
+            if (info.type() == 0) {
+                score += 1000;
+            } else if (info.type() == 1) {
+                score += 100;
+            }
+            
+            // ベンダー名/ブランド名キーワード判定
+            if (name.find("nvidia") != std::string::npos || name.find("geforce") != std::string::npos) {
+                score += 500;
+            } else if (name.find("amd") != std::string::npos || name.find("radeon") != std::string::npos) {
+                score += 400;
+            } else if (name.find("intel") != std::string::npos) {
+                score += 50;
+            }
+            
+            // VRAM予算（補助スコア）
+            uint32_t budget = device->get_heap_budget();
+            score += static_cast<int>(budget / 100);
+            
+            std::cout << "[INFO] GPU デバイス [" << i << "]: " << info.device_name() 
+                      << " (Type: " << info.type() << ", VRAM: " << budget << " MB) -> スコア: " << score << std::endl;
+            
+            if (score > best_score) {
+                best_score = score;
+                best_idx = i;
+            }
+        }
+        
+        const auto* best_device = ncnn::get_gpu_device(best_idx);
+        std::cout << "[INFO] GPU 自動選択: " << best_idx << " [" << best_device->info.device_name() << "] を使用します。" << std::endl;
+        return best_idx;
     }
 
     void denoise_frame(const cv::Mat& input, cv::Mat& output) {
@@ -108,6 +150,7 @@ namespace utils {
     }
 
     void print_progress(int current, int total) {
+        if (total <= 0) return;
         float progress = (float)current / total * 100.0f;
         std::cout << "\r[PROGRESS] " << std::fixed << std::setprecision(2) << progress << "% (" 
                   << current << " / " << total << " )" << std::flush;

@@ -41,6 +41,11 @@ private:
     
     std::string model_param;
     std::string model_bin;
+
+    // タイル処理用キャッシュバッファ
+    cv::Mat tile_f1;
+    cv::Mat tile_f2;
+    cv::Mat tile_out;
 };
 
 #endif // INTERPOLATOR_H
