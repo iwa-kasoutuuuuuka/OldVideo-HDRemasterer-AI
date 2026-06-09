@@ -183,8 +183,17 @@ bool VideoProcessor::run(const Config& config) {
     // 制御変数とキュー
     std::atomic<bool> error_occurred(false);
     std::atomic<bool> done_decoding(false);
-    SafeQueue<cv::Mat> decode_queue(5); // VRAM/RAM 節約のためバッファサイズは5
-    SafeQueue<cv::Mat> encode_queue(5);
+    std::atomic<bool> done_upscaling(false);
+    SafeQueue<cv::Mat> decode_queue(16); // バッファサイズを16に拡張してI/Oを平滑化
+    
+    // 超解像完了後のフレームを一時保持するキュー
+    struct UpscaledPair {
+        cv::Mat frame;       // 元解像度のフレーム（静止判定用）
+        cv::Mat upscaled;    // 超解像後のフレーム
+        int frame_index;
+    };
+    SafeQueue<UpscaledPair> interp_queue(16);
+    SafeQueue<cv::Mat> encode_queue(16);
 
     // デコードスレッドの開始
     std::thread decoder_thread([&]() {
@@ -213,6 +222,57 @@ bool VideoProcessor::run(const Config& config) {
         }
         done_decoding = true;
         decode_queue.shutdown();
+    });
+
+    // RIFE/補間スレッドの開始 (GPU超解像と非同期に動かす)
+    std::thread interp_thread([&]() {
+        UpscaledPair current_pair;
+        cv::Mat prev_upscaled;
+        cv::Mat prev_frame;
+
+        while (interp_queue.pop(current_pair)) {
+            if (error_occurred) {
+                break;
+            }
+
+            // フレーム補間 (RIFE)
+            if (config.enable_interpolation && !prev_upscaled.empty()) {
+                bool is_static = false;
+                // 静止フレーム判定 (元解像度のフレームで判定して高速化)
+                if (!prev_frame.empty()) {
+                    cv::Mat diff;
+                    cv::absdiff(current_pair.frame, prev_frame, diff);
+                    cv::Scalar mean_diff = cv::mean(diff);
+                    double diff_val = (mean_diff[0] + mean_diff[1] + mean_diff[2]) / 3.0;
+
+                    // しきい値 0.3
+                    if (diff_val < 0.3) {
+                        is_static = true;
+                    }
+                }
+
+                cv::Mat interp_frame;
+                if (is_static) {
+                    // RIFE推論をバイパスして、前フレームのコピーを使用
+                    interp_frame = prev_upscaled.clone();
+                } else {
+                    if (!interpolator_svc.process(prev_upscaled, current_pair.upscaled, interp_frame)) {
+                        std::cerr << "\n[ERROR] RIFE処理失敗。" << std::endl;
+                        error_occurred = true;
+                        break;
+                    }
+                }
+                encode_queue.push(std::move(interp_frame));
+            }
+
+            // 本フレームをエンコードキューへプッシュ
+            encode_queue.push(current_pair.upscaled.clone());
+
+            // RIFEバイパス用の前フレーム保持
+            prev_frame = current_pair.frame.clone();
+            prev_upscaled = current_pair.upscaled.clone();
+        }
+        encode_queue.shutdown();
     });
 
     // エンコードスレッドの開始
@@ -337,9 +397,8 @@ bool VideoProcessor::run(const Config& config) {
         }
     });
 
-    // メインスレッド: AI処理ループ
-    cv::Mat frame, upscaled, prev_upscaled;
-    cv::Mat prev_frame; // RIFE バイパス用
+    // メインスレッド: GPU超解像専用処理ループ
+    cv::Mat frame, upscaled;
     int current_frame = 0;
 
     while (decode_queue.pop(frame)) {
@@ -347,51 +406,20 @@ bool VideoProcessor::run(const Config& config) {
             break;
         }
 
-        // AI アップスケーリング
+        // AI アップスケーリング (GPU)
         if (!upscaler.process(frame, upscaled)) {
             std::cerr << "\n[ERROR] アップスケール失敗。" << std::endl;
             error_occurred = true;
             break;
         }
 
-        // フレーム補間 (RIFE)
-        if (config.enable_interpolation && !prev_upscaled.empty()) {
-            bool is_static = false;
-            // 静止フレーム判定 (元解像度のフレームで判定して高速化)
-            if (!prev_frame.empty()) {
-                cv::Mat diff;
-                cv::absdiff(frame, prev_frame, diff);
-                cv::Scalar mean_diff = cv::mean(diff);
-                double diff_val = (mean_diff[0] + mean_diff[1] + mean_diff[2]) / 3.0;
+        // RIFE補間中間スレッドへ引き渡す
+        UpscaledPair pair;
+        pair.frame = frame.clone();
+        pair.upscaled = upscaled.clone();
+        pair.frame_index = current_frame;
+        interp_queue.push(std::move(pair));
 
-                // しきい値 0.3
-                if (diff_val < 0.3) {
-                    is_static = true;
-                }
-            }
-
-            cv::Mat interp_frame;
-            if (is_static) {
-                // RIFE推論をバイパスして、前フレームのコピーを使用
-                interp_frame = prev_upscaled.clone();
-            } else {
-                if (!interpolator_svc.process(prev_upscaled, upscaled, interp_frame)) {
-                    std::cerr << "\n[ERROR] RIFE処理失敗。" << std::endl;
-                    error_occurred = true;
-                    break;
-                }
-            }
-            encode_queue.push(std::move(interp_frame));
-        }
-
-        // 本フレームをエンコードキューへプッシュ
-        encode_queue.push(upscaled.clone());
-
-        // RIFEバイパス用の前フレーム保持
-        prev_frame = frame.clone();
-
-        // 状態更新
-        std::swap(prev_upscaled, upscaled);
         current_frame++;
 
         if (total_to_process > 0) {
@@ -425,10 +453,14 @@ bool VideoProcessor::run(const Config& config) {
 
     // キューの終了とスレッド合流
     decode_queue.shutdown();
+    interp_queue.shutdown();
     encode_queue.shutdown();
 
     if (decoder_thread.joinable()) {
         decoder_thread.join();
+    }
+    if (interp_thread.joinable()) {
+        interp_thread.join();
     }
     if (encoder_thread.joinable()) {
         encoder_thread.join();
@@ -459,3 +491,4 @@ bool VideoProcessor::run(const Config& config) {
     if (config.progress_callback) config.progress_callback(1.0f, "完了しました！");
     return merge_ok;
 }
+
