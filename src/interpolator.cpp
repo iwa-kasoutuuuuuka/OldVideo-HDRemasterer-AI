@@ -7,11 +7,8 @@
 #include "cpu.h"
 
 Interpolator::Interpolator() : gpudevice(false), is_flownet(false), gpu_index(-1) {
-    // RIFE は CPU で動作させて VRAM 枯渇および Vulkan 最大サイズ制限エラーを防ぐ
-    gpudevice = false;
-    
     // CPU スレッド数の最適化
-    rife.opt.num_threads = ncnn::get_cpu_count();
+    rife.opt.num_threads = 1;
     
     // カスタムレイヤー "rife.Warp" を登録
     rife.register_custom_layer("rife.Warp", Warp_layer_creator);
@@ -21,7 +18,22 @@ Interpolator::~Interpolator() {
     rife.clear();
 }
 
-bool Interpolator::load(const std::string& model_dir) {
+bool Interpolator::load(const std::string& model_dir, int gpu_index) {
+    this->gpu_index = gpu_index;
+    if (gpu_index >= 0) {
+        gpudevice = true;
+        rife.opt.use_vulkan_compute = true;
+        rife.opt.use_fp16_packed = true;
+        rife.opt.use_fp16_storage = true;
+        rife.opt.use_fp16_arithmetic = true;
+        rife.opt.use_shader_pack8 = true;
+        rife.opt.use_image_storage = false; // Vulkan最大次元(16384等)エラー回避のため
+        rife.set_vulkan_device(gpu_index);
+    } else {
+        gpudevice = false;
+        rife.opt.use_vulkan_compute = false;
+    }
+
     std::string param = model_dir + "/rife-v4.param";
     std::string bin = model_dir + "/rife-v4.bin";
     is_flownet = false;
@@ -37,10 +49,6 @@ bool Interpolator::load(const std::string& model_dir) {
     model_param = param;
     model_bin = bin;
 
-    if (gpudevice) {
-        rife.set_vulkan_device(gpu_index);
-    }
-
     if (rife.load_param(param.c_str()) != 0) {
         std::cerr << "[ERROR] RIFE param load failed: " << param << std::endl;
         return false;
@@ -50,6 +58,7 @@ bool Interpolator::load(const std::string& model_dir) {
         return false;
     }
 
+    std::cout << "[INFO] RIFE モデルロード完了 (動作モード: " << (gpudevice ? "GPU/Vulkan" : "CPU") << ", GPU Index: " << gpu_index << ")" << std::endl << std::flush;
     return true;
 }
 
@@ -80,7 +89,7 @@ bool Interpolator::process(const cv::Mat& f1, const cv::Mat& f2, cv::Mat& out, f
     ncnn::Mat n_timestep(1);
     n_timestep[0] = timestep;
 
-    int tile_size = 512;
+    int tile_size = 2048;
 
     if (w <= tile_size && h <= tile_size) {
         int ret = 0;
@@ -88,6 +97,7 @@ bool Interpolator::process(const cv::Mat& f1, const cv::Mat& f2, cv::Mat& out, f
             ncnn::Mat n_f1 = ncnn::Mat::from_pixels(f1.data, ncnn::Mat::PIXEL_BGR, w, h);
             ncnn::Mat n_f2 = ncnn::Mat::from_pixels(f2.data, ncnn::Mat::PIXEL_BGR, w, h);
 
+            std::cout << "[DEBUG] RIFE 一括推論開始: size=" << w << "x" << h << std::endl << std::flush;
             ncnn::Extractor ex = rife.create_extractor();
             ex.input(in0_name.c_str(), n_f1);
             ex.input(in1_name.c_str(), n_f2);
@@ -95,6 +105,7 @@ bool Interpolator::process(const cv::Mat& f1, const cv::Mat& f2, cv::Mat& out, f
             
             ncnn::Mat n_out;
             ret = ex.extract(out_name.c_str(), n_out);
+            std::cout << "[DEBUG] RIFE 一括推論終了 (ret=" << ret << ")" << std::endl << std::flush;
             if (ret == 0) {
                 n_out.to_pixels(out.data, ncnn::Mat::PIXEL_BGR);
             }
@@ -109,6 +120,7 @@ bool Interpolator::process(const cv::Mat& f1, const cv::Mat& f2, cv::Mat& out, f
 
     // Tiled processing for RIFE
     const int padding = 32;
+    int tile_count = 0;
     for (int y = 0; y < h; y += tile_size) {
         for (int x = 0; x < w; x += tile_size) {
             int x0 = std::max(x - padding, 0);
@@ -116,6 +128,7 @@ bool Interpolator::process(const cv::Mat& f1, const cv::Mat& f2, cv::Mat& out, f
             int x1 = std::min(x + tile_size + padding, w);
             int y1 = std::min(y + tile_size + padding, h);
 
+            cv::Mat tile_f1, tile_f2, tile_out;
             f1(cv::Range(y0, y1), cv::Range(x0, x1)).copyTo(tile_f1);
             f2(cv::Range(y0, y1), cv::Range(x0, x1)).copyTo(tile_f2);
             int ret = 0;
@@ -123,6 +136,7 @@ bool Interpolator::process(const cv::Mat& f1, const cv::Mat& f2, cv::Mat& out, f
                 ncnn::Mat nt1 = ncnn::Mat::from_pixels(tile_f1.data, ncnn::Mat::PIXEL_BGR, tile_f1.cols, tile_f1.rows);
                 ncnn::Mat nt2 = ncnn::Mat::from_pixels(tile_f2.data, ncnn::Mat::PIXEL_BGR, tile_f2.cols, tile_f2.rows);
 
+                std::cout << "[DEBUG] RIFE tile " << tile_count << " (x=" << x << ", y=" << y << ") 推論開始..." << std::endl << std::flush;
                 ncnn::Extractor ex = rife.create_extractor();
                 ex.input(in0_name.c_str(), nt1);
                 ex.input(in1_name.c_str(), nt2);
@@ -130,6 +144,7 @@ bool Interpolator::process(const cv::Mat& f1, const cv::Mat& f2, cv::Mat& out, f
                 
                 ncnn::Mat nt_out;
                 ret = ex.extract(out_name.c_str(), nt_out);
+                std::cout << "[DEBUG] RIFE tile " << tile_count << " 推論終了 (ret=" << ret << ")" << std::endl << std::flush;
 
                 if (ret == 0) {
                     tile_out.create(nt_out.h, nt_out.w, CV_8UC3);
@@ -147,8 +162,19 @@ bool Interpolator::process(const cv::Mat& f1, const cv::Mat& f2, cv::Mat& out, f
             int src_x = x - x0;
             int src_y = y - y0;
 
-            tile_out(cv::Range(src_y, src_y + target_h), cv::Range(src_x, src_x + target_w))
-                .copyTo(out(cv::Range(y, y + target_h), cv::Range(x, x + target_w)));
+            // tile_out のサイズに合わせた安全な境界クリップを追加
+            if (src_x + target_w > tile_out.cols) {
+                target_w = std::max(tile_out.cols - src_x, 0);
+            }
+            if (src_y + target_h > tile_out.rows) {
+                target_h = std::max(tile_out.rows - src_y, 0);
+            }
+
+            if (target_w > 0 && target_h > 0) {
+                tile_out(cv::Range(src_y, src_y + target_h), cv::Range(src_x, src_x + target_w))
+                    .copyTo(out(cv::Range(y, y + target_h), cv::Range(x, x + target_w)));
+            }
+            tile_count++;
         }
     }
 

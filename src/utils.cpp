@@ -63,6 +63,56 @@ namespace utils {
         return best_idx;
     }
 
+    std::vector<int> get_gpu_indices_sorted() {
+        int count = ncnn::get_gpu_count();
+        if (count == 0) return {};
+        
+        std::vector<std::pair<int, int>> gpu_scores; // index -> score
+        for (int i = 0; i < count; i++) {
+            const auto* device = ncnn::get_gpu_device(i);
+            if (!device) continue;
+            
+            const auto& info = device->info;
+            std::string name = info.device_name();
+            std::transform(name.begin(), name.end(), name.begin(), ::tolower);
+            
+            int score = 0;
+            // デバイスタイプ判定 (Discrete GPU優先: type 0)
+            if (info.type() == 0) {
+                score += 1000;
+            } else if (info.type() == 1) {
+                score += 100;
+            }
+            
+            // ベンダー名/ブランド名キーワード判定
+            if (name.find("nvidia") != std::string::npos || name.find("geforce") != std::string::npos) {
+                score += 500;
+            } else if (name.find("amd") != std::string::npos || name.find("radeon") != std::string::npos) {
+                score += 400;
+            } else if (name.find("intel") != std::string::npos) {
+                score += 50;
+            }
+            
+            // VRAM予算（補助スコア）
+            uint32_t budget = device->get_heap_budget();
+            score += static_cast<int>(budget / 100);
+            
+            gpu_scores.push_back({i, score});
+        }
+        
+        // スコア降順ソート
+        std::sort(gpu_scores.begin(), gpu_scores.end(), [](const auto& a, const auto& b) {
+            return a.second > b.second;
+        });
+        
+        std::vector<int> indices;
+        for (const auto& pair : gpu_scores) {
+            indices.push_back(pair.first);
+        }
+        return indices;
+    }
+
+
     void denoise_frame(const cv::Mat& input, cv::Mat& output) {
         // fastNlMeansDenoisingColored は重いためスキップし、ノイズ処理は AI (Real-ESRGAN 等) に任せる
         input.copyTo(output);
@@ -128,24 +178,18 @@ namespace utils {
         }
         #endif
 
-        std::string trim_input_args = "";
+        std::string trim_audio_args = "";
         if (enable_trim) {
             std::stringstream ss;
             ss << " -ss " << trim_start << " -t " << trim_duration;
-            trim_input_args = ss.str();
+            trim_audio_args = ss.str();
         }
 
-        // FFmpegコマンド: NVENC ハードウェアエンコードを試行 (サニタイズ済みのパスを使用)
-        std::string cmd_hw = ffmpeg_cmd + " -y -i \"" + s_no_audio + "\"" + trim_input_args + " -i \"" + s_original + 
-                          "\" -c:v h264_nvenc -preset p6 -cq 20 -c:a aac -map 0:v:0 -map 1:a:0? -shortest \"" + s_final + "\"";
+        // FFmpegコマンド: ビデオは無劣化コピー (-c:v copy) を適用し、音声のみマージ
+        std::string cmd = ffmpeg_cmd + " -y -i \"" + s_no_audio + "\" " + trim_audio_args + " -i \"" + s_original + 
+                          "\" -c:v copy -c:a aac -map 0:v:0 -map 1:a:0? -shortest \"" + s_final + "\"";
         
-        int ret = std::system(cmd_hw.c_str());
-        if (ret != 0) {
-            std::cout << "[INFO] Hardware encoding (NVENC) failed or unavailable. Falling back to libx264 software encoding." << std::endl;
-            std::string cmd_sw = ffmpeg_cmd + " -y -i \"" + s_no_audio + "\"" + trim_input_args + " -i \"" + s_original + 
-                              "\" -c:v libx264 -crf 20 -preset fast -c:a aac -map 0:v:0 -map 1:a:0? -shortest \"" + s_final + "\"";
-            ret = std::system(cmd_sw.c_str());
-        }
+        int ret = std::system(cmd.c_str());
         return (ret == 0);
     }
 

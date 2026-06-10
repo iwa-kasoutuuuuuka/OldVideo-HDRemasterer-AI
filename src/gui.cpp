@@ -558,7 +558,11 @@ int GUIManager::run() {
 
                                     // 超解像の適用 (プレビュー生成)
                                     Upscaler temp_upscaler;
-                                    if (temp_upscaler.load("models", scale, tile_size, model_name)) {
+                                    int actual_tile_size = tile_size;
+                                    if (actual_tile_size <= 0) {
+                                        actual_tile_size = VideoProcessor::get_auto_tile_size(false, model_name);
+                                    }
+                                    if (temp_upscaler.load("models", scale, actual_tile_size, model_name)) {
                                         cv::Mat upscaled_frame;
                                         if (temp_upscaler.process(raw_frame, upscaled_frame)) {
                                             std::lock_guard<std::mutex> lk(preview_mtx);

@@ -17,9 +17,10 @@ public:
     /**
      * @brief Load the RIFE model
      * @param model_dir Directory containing rife model files
+     * @param gpu_index Preferred GPU index (-1 for CPU)
      * @return Success or failure
      */
-    bool load(const std::string& model_dir);
+    bool load(const std::string& model_dir, int gpu_index = -1);
 
     /**
      * @brief Generate an intermediate frame between two frames
@@ -42,10 +43,6 @@ private:
     std::string model_param;
     std::string model_bin;
 
-    // タイル処理用キャッシュバッファ
-    cv::Mat tile_f1;
-    cv::Mat tile_f2;
-    cv::Mat tile_out;
 };
 
 #endif // INTERPOLATOR_H

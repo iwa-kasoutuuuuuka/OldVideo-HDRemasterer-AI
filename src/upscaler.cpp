@@ -44,6 +44,7 @@ bool Upscaler::load(const std::string& model_dir, int _scale, int _tile_size, co
 
     if (gpudevice) {
         net.set_vulkan_device(gpu_index);
+        net.opt.use_image_storage = false; // Vulkan最大次元エラーおよびCPUフォールバック回避のため常にfalse
     }
 
     if (net.load_param(model_param.c_str()) != 0) {

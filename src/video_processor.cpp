@@ -61,16 +61,26 @@ public:
     }
 };
 
-int VideoProcessor::get_auto_tile_size() {
+int VideoProcessor::get_auto_tile_size(bool enable_interpolation, const std::string& model_name) {
     int gpu_idx = utils::get_preferred_gpu_index();
     if (gpu_idx < 0) return 256; // Fallback for CPU
     uint32_t budget_mb = ncnn::get_gpu_device(gpu_idx)->get_heap_budget();
     
-    // Automatically clamp tile size based on approx total VRAM budget
-    if (budget_mb >= 8000) return 400;
-    if (budget_mb >= 4000) return 256;
-    if (budget_mb >= 2000) return 128;
-    return 64;
+    // realesrgan-x4plus や realesrgan-x2plus などの重い実写モデルか判定
+    bool is_heavy_model = (model_name.find("realesrgan-x") != std::string::npos);
+    
+    // RIFE補間が有効な場合、または重い実写モデルの場合、VRAM溢れを防ぐためにタイルサイズを制限する
+    if (enable_interpolation || is_heavy_model) {
+        if (budget_mb >= 6000) return 320;
+        if (budget_mb >= 3000) return 256; // GTX 1650等 (4GB VRAM) では 256 が安全
+        if (budget_mb >= 1500) return 128;
+        return 96;
+    } else {
+        if (budget_mb >= 6000) return 400;
+        if (budget_mb >= 3000) return 320;
+        if (budget_mb >= 1500) return 160;
+        return 128;
+    }
 }
 
 VideoProcessor::VideoProcessor() {}
@@ -117,14 +127,6 @@ bool VideoProcessor::run(const Config& config) {
 
     // 2. アップスケーラーと補完器のロード
     int actual_tile_size = config.tile_size;
-    if (actual_tile_size <= 0) {
-        actual_tile_size = get_auto_tile_size();
-        std::cout << "[INFO] タイルサイズを自動設定しました: " << actual_tile_size << std::endl << std::flush;
-    }
-
-    if (config.progress_callback) config.progress_callback(0.05f, "AIモデルのロード中...");
-    std::cout << "[RUN] Step 3: AIモデルロード中..." << std::endl << std::flush;
-    
     std::string actual_model_name = config.model_name;
     if (actual_model_name.empty()) {
         if (config.use_fast_model) {
@@ -134,6 +136,14 @@ bool VideoProcessor::run(const Config& config) {
         }
     }
 
+    if (actual_tile_size <= 0) {
+        actual_tile_size = get_auto_tile_size(config.enable_interpolation, actual_model_name);
+        std::cout << "[INFO] タイルサイズを自動設定しました: " << actual_tile_size << std::endl << std::flush;
+    }
+
+    if (config.progress_callback) config.progress_callback(0.05f, "AIモデルのロード中...");
+    std::cout << "[RUN] Step 3: AIモデルロード中..." << std::endl << std::flush;
+    
     if (!upscaler.load(config.model_dir, config.scale, actual_tile_size, actual_model_name)) {
         std::cerr << "[ERROR] AIモデルのロードに失敗しました" << std::endl << std::flush;
         return false;
@@ -142,7 +152,18 @@ bool VideoProcessor::run(const Config& config) {
     
     if (config.enable_interpolation) {
         std::cout << "[RUN] Step 3b: RIFE モデルロード中..." << std::endl << std::flush;
-        if (!interpolator_svc.load(config.model_dir)) {
+        int gpu_idx = utils::get_preferred_gpu_index();
+        
+        // マルチGPU検出と自動割り当て
+        std::vector<int> gpu_list = utils::get_gpu_indices_sorted();
+        if (gpu_list.size() > 1) {
+            gpu_idx = gpu_list[1]; // セカンドGPUを使用
+            std::cout << "[INFO] マルチGPU検出: RIFE補間にセカンドGPU (Index: " << gpu_idx << ") を割り当てます。" << std::endl << std::flush;
+        } else {
+            std::cout << "[INFO] シングルGPU検出: RIFE補間と超解像で同一GPU (Index: " << gpu_idx << ") を共有します。" << std::endl << std::flush;
+        }
+
+        if (!interpolator_svc.load(config.model_dir, gpu_idx)) {
             std::cerr << "[ERROR] RIFEモデルのロードに失敗しました" << std::endl << std::flush;
             return false;
         }
@@ -182,22 +203,13 @@ bool VideoProcessor::run(const Config& config) {
 
     // 制御変数とキュー
     std::atomic<bool> error_occurred(false);
-    std::atomic<bool> done_decoding(false);
-    std::atomic<bool> done_upscaling(false);
-    SafeQueue<cv::Mat> decode_queue(16); // バッファサイズを16に拡張してI/Oを平滑化
-    
-    // 超解像完了後のフレームを一時保持するキュー
-    struct UpscaledPair {
-        cv::Mat frame;       // 元解像度のフレーム（静止判定用）
-        cv::Mat upscaled;    // 超解像後のフレーム
-        int frame_index;
-    };
-    SafeQueue<UpscaledPair> interp_queue(16);
+    SafeQueue<cv::Mat> upscale_queue(16);
     SafeQueue<cv::Mat> encode_queue(16);
 
-    // デコードスレッドの開始
+    // デコード＆補間スレッドの開始 (デコードと低解像度でのRIFE補間を直列化してスレッド競合を防ぐ)
     std::thread decoder_thread([&]() {
         cv::Mat local_frame;
+        cv::Mat prev_frame;
         int decoded_count = 0;
         while (true) {
             if ((config.stop_flag && *config.stop_flag) || error_occurred) {
@@ -217,62 +229,46 @@ bool VideoProcessor::run(const Config& config) {
                 break;
             }
 
-            decode_queue.push(local_frame.clone()); // キューにプッシュ
-            decoded_count++;
-        }
-        done_decoding = true;
-        decode_queue.shutdown();
-    });
-
-    // RIFE/補間スレッドの開始 (GPU超解像と非同期に動かす)
-    std::thread interp_thread([&]() {
-        UpscaledPair current_pair;
-        cv::Mat prev_upscaled;
-        cv::Mat prev_frame;
-
-        while (interp_queue.pop(current_pair)) {
-            if (error_occurred) {
-                break;
-            }
-
             // フレーム補間 (RIFE)
-            if (config.enable_interpolation && !prev_upscaled.empty()) {
+            if (config.enable_interpolation && !prev_frame.empty()) {
                 bool is_static = false;
-                // 静止フレーム判定 (元解像度のフレームで判定して高速化)
-                if (!prev_frame.empty()) {
-                    cv::Mat diff;
-                    cv::absdiff(current_pair.frame, prev_frame, diff);
-                    cv::Scalar mean_diff = cv::mean(diff);
-                    double diff_val = (mean_diff[0] + mean_diff[1] + mean_diff[2]) / 3.0;
+                // 静止フレーム判定
+                cv::Mat diff;
+                cv::absdiff(local_frame, prev_frame, diff);
+                cv::Scalar mean_diff = cv::mean(diff);
+                double diff_val = (mean_diff[0] + mean_diff[1] + mean_diff[2]) / 3.0;
 
-                    // しきい値 0.3
-                    if (diff_val < 0.3) {
-                        is_static = true;
-                    }
+                // しきい値 0.3
+                if (diff_val < 0.3) {
+                    is_static = true;
                 }
 
                 cv::Mat interp_frame;
                 if (is_static) {
                     // RIFE推論をバイパスして、前フレームのコピーを使用
-                    interp_frame = prev_upscaled.clone();
+                    interp_frame = prev_frame.clone();
                 } else {
-                    if (!interpolator_svc.process(prev_upscaled, current_pair.upscaled, interp_frame)) {
+                    std::cout << "[DEBUG] RIFE 推論開始: size=" << prev_frame.cols << "x" << prev_frame.rows << std::endl << std::flush;
+                    if (!interpolator_svc.process(prev_frame, local_frame, interp_frame)) {
                         std::cerr << "\n[ERROR] RIFE処理失敗。" << std::endl;
                         error_occurred = true;
                         break;
                     }
+                    std::cout << "[DEBUG] RIFE 推論成功" << std::endl << std::flush;
                 }
-                encode_queue.push(std::move(interp_frame));
+                upscale_queue.push(std::move(interp_frame));
             }
 
-            // 本フレームをエンコードキューへプッシュ
-            encode_queue.push(current_pair.upscaled.clone());
-
-            // RIFEバイパス用の前フレーム保持
-            prev_frame = current_pair.frame.clone();
-            prev_upscaled = current_pair.upscaled.clone();
+            // 本フレームをアップスケールキューへプッシュ
+            if (config.enable_interpolation) {
+                prev_frame = local_frame.clone(); // 次回補間用にクローンして保持
+                upscale_queue.push(std::move(local_frame)); // 本フレームは move で転送
+            } else {
+                upscale_queue.push(std::move(local_frame)); // 補間なしならクローンなしで move
+            }
+            decoded_count++;
         }
-        encode_queue.shutdown();
+        upscale_queue.shutdown();
     });
 
     // エンコードスレッドの開始
@@ -305,21 +301,24 @@ bool VideoProcessor::run(const Config& config) {
 #endif
                     // HW NVENC エンコーダ (4K超過時はHEVCにフォールバック)
                     std::string vcodec = (target_width > 4096 || target_height > 4096) ? "hevc_nvenc" : "h264_nvenc";
-                    std::string cmd = ffmpeg_path + " -y -f rawvideo -pix_fmt bgr24 -s " + std::to_string(target_width) + "x" + std::to_string(target_height) +
-                                      " -r " + std::to_string(output_fps) + " -i - -c:v " + vcodec + " -preset p4 -cq 20 -pix_fmt yuv420p \"" + temp_video + "\"";
+                    // 入力ピクセルフォーマットを yuv420p に変更してデータ転送量を半減＆FFmpeg swscaleを回避
+                    std::string cmd = ffmpeg_path + " -y -f rawvideo -pix_fmt yuv420p -s " + std::to_string(target_width) + "x" + std::to_string(target_height) +
+                                      " -r " + std::to_string(output_fps) + " -i - -c:v " + vcodec + " -preset p2 -cq 20 -pix_fmt yuv420p \"" + temp_video + "\" 2> ffmpeg_error.log";
 #ifdef _WIN32
                     ffmpeg_pipe = _popen(cmd.c_str(), "wb");
 #else
                     ffmpeg_pipe = popen(cmd.c_str(), "w");
 #endif
                     if (ffmpeg_pipe) {
-                        // 1フレーム書き込みテスト
-                        size_t expected_size = local_out.total() * local_out.elemSize();
-                        size_t written = fwrite(local_out.data, 1, expected_size, ffmpeg_pipe);
+                        // 1フレーム書き込みテスト (YUV420pへの変換を行いサイズを確認)
+                        cv::Mat yuv_test;
+                        cv::cvtColor(local_out, yuv_test, cv::COLOR_BGR2YUV_I420);
+                        size_t expected_size = yuv_test.total() * yuv_test.elemSize();
+                        size_t written = fwrite(yuv_test.data, 1, expected_size, ffmpeg_pipe);
                         fflush(ffmpeg_pipe);
                         if (written == expected_size) {
                             use_ffmpeg = true;
-                            std::cout << "[INFO] FFmpeg NVENC パイプエンコードを有効化しました。" << std::endl;
+                            std::cout << "[INFO] FFmpeg NVENC パイプエンコードを有効化しました (YUV420p直接転送)。" << std::endl;
                         } else {
                             std::cerr << "[WARNING] FFmpeg パイプ(NVENC)の書き込みテストに失敗しました。CPUエンコードに切り替えます。" << std::endl;
 #ifdef _WIN32
@@ -333,20 +332,22 @@ bool VideoProcessor::run(const Config& config) {
 
                     if (!use_ffmpeg) {
                         // CPU libx264 で試行
-                        std::string cmd_sw = ffmpeg_path + " -y -f rawvideo -pix_fmt bgr24 -s " + std::to_string(target_width) + "x" + std::to_string(target_height) +
-                                          " -r " + std::to_string(output_fps) + " -i - -c:v libx264 -preset ultrafast -crf 20 -pix_fmt yuv420p \"" + temp_video + "\"";
+                        std::string cmd_sw = ffmpeg_path + " -y -f rawvideo -pix_fmt yuv420p -s " + std::to_string(target_width) + "x" + std::to_string(target_height) +
+                                          " -r " + std::to_string(output_fps) + " -i - -c:v libx264 -preset ultrafast -crf 20 -pix_fmt yuv420p \"" + temp_video + "\" 2> ffmpeg_error.log";
 #ifdef _WIN32
                         ffmpeg_pipe = _popen(cmd_sw.c_str(), "wb");
 #else
                         ffmpeg_pipe = popen(cmd_sw.c_str(), "w");
 #endif
                         if (ffmpeg_pipe) {
-                            size_t expected_size = local_out.total() * local_out.elemSize();
-                            size_t written = fwrite(local_out.data, 1, expected_size, ffmpeg_pipe);
+                            cv::Mat yuv_test;
+                            cv::cvtColor(local_out, yuv_test, cv::COLOR_BGR2YUV_I420);
+                            size_t expected_size = yuv_test.total() * yuv_test.elemSize();
+                            size_t written = fwrite(yuv_test.data, 1, expected_size, ffmpeg_pipe);
                             fflush(ffmpeg_pipe);
                             if (written == expected_size) {
                                 use_ffmpeg = true;
-                                std::cout << "[INFO] FFmpeg libx264 パイプエンコードを有効化しました。" << std::endl;
+                                std::cout << "[INFO] FFmpeg libx264 パイプエンコードを有効化しました (YUV420p直接転送)。" << std::endl;
                             } else {
                                 std::cerr << "[WARNING] FFmpeg パイプ(libx264)の書き込みテストに失敗しました。" << std::endl;
 #ifdef _WIN32
@@ -373,13 +374,17 @@ bool VideoProcessor::run(const Config& config) {
                 writer_initialized = true;
             } else {
                 if (use_ffmpeg && ffmpeg_pipe) {
-                    size_t expected_size = local_out.total() * local_out.elemSize();
-                    size_t written = fwrite(local_out.data, 1, expected_size, ffmpeg_pipe);
+                    cv::Mat yuv_frame;
+                    cv::cvtColor(local_out, yuv_frame, cv::COLOR_BGR2YUV_I420);
+                    size_t expected_size = yuv_frame.total() * yuv_frame.elemSize();
+                    std::cout << "[DEBUG] FFmpeg パイプ書き込み開始 (YUV): size=" << expected_size << std::endl << std::flush;
+                    size_t written = fwrite(yuv_frame.data, 1, expected_size, ffmpeg_pipe);
                     if (written < expected_size) {
                         std::cerr << "[ERROR] FFmpeg パイプ書き込み中にエラーが発生しました。" << std::endl;
                         error_occurred = true;
                         break;
                     }
+                    std::cout << "[DEBUG] FFmpeg パイプ書き込み成功" << std::endl << std::flush;
                 } else {
                     cv_writer.write(local_out);
                 }
@@ -398,41 +403,46 @@ bool VideoProcessor::run(const Config& config) {
     });
 
     // メインスレッド: GPU超解像専用処理ループ
-    cv::Mat frame, upscaled;
+    cv::Mat frame;
     int current_frame = 0;
+    
+    // 補間（RIFE）によって最終出力フレーム数は約2倍（補間有効時）になる
+    // 進捗表示のために処理総フレーム数を調整
+    int expected_total_to_process = config.enable_interpolation ? (total_to_process * 2 - 1) : total_to_process;
+    if (expected_total_to_process <= 0) expected_total_to_process = 1; // 0除算防止
 
-    while (decode_queue.pop(frame)) {
+    while (upscale_queue.pop(frame)) {
         if ((config.stop_flag && *config.stop_flag) || error_occurred) {
             break;
         }
 
+        cv::Mat upscaled;
         // AI アップスケーリング (GPU)
+        std::cout << "[DEBUG] 超解像推論開始: frame=" << current_frame << ", size=" << frame.cols << "x" << frame.rows << std::endl << std::flush;
         if (!upscaler.process(frame, upscaled)) {
             std::cerr << "\n[ERROR] アップスケール失敗。" << std::endl;
             error_occurred = true;
             break;
         }
+        std::cout << "[DEBUG] 超解像推論成功" << std::endl << std::flush;
 
-        // RIFE補間中間スレッドへ引き渡す
-        UpscaledPair pair;
-        pair.frame = frame.clone();
-        pair.upscaled = upscaled.clone();
-        pair.frame_index = current_frame;
-        interp_queue.push(std::move(pair));
+        // エンコードスレッドへ引き渡す (std::moveでクローンを回避)
+        encode_queue.push(std::move(upscaled));
 
         current_frame++;
 
-        if (total_to_process > 0) {
+        if (expected_total_to_process > 0) {
             auto now = std::chrono::steady_clock::now();
             double elapsed_sec = std::max(std::chrono::duration<double>(now - start_time).count(), 0.001);
             double fps_processing = current_frame / elapsed_sec;
-            double remaining_sec = (total_to_process - current_frame) / std::max(fps_processing, 0.001);
+            double remaining_sec = (expected_total_to_process - current_frame) / std::max(fps_processing, 0.001);
             
-            float p = 0.1f + 0.8f * ((float)current_frame / total_to_process);
+            float p = 0.1f + 0.8f * ((float)current_frame / expected_total_to_process);
+            p = std::min(std::max(p, 0.0f), 0.9f); // 90% を進捗上限にして残りは音声マージなどの余白とする
             
             std::stringstream ss;
             ss << std::fixed << std::setprecision(1);
-            ss << "処理中: " << current_frame << "/" << total_to_process << " フレーム"
+            ss << "処理中: " << current_frame << "/" << expected_total_to_process << " フレーム"
                << " | " << fps_processing << " fps | 残り時間: ";
                
             int r_h = static_cast<int>(remaining_sec) / 3600;
@@ -452,15 +462,11 @@ bool VideoProcessor::run(const Config& config) {
     }
 
     // キューの終了とスレッド合流
-    decode_queue.shutdown();
-    interp_queue.shutdown();
+    upscale_queue.shutdown();
     encode_queue.shutdown();
 
     if (decoder_thread.joinable()) {
         decoder_thread.join();
-    }
-    if (interp_thread.joinable()) {
-        interp_thread.join();
     }
     if (encoder_thread.joinable()) {
         encoder_thread.join();

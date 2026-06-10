@@ -14,6 +14,11 @@ int Warp::forward(const std::vector<ncnn::Mat>& bottom_blobs, std::vector<ncnn::
     if (bottom_blobs.size() < 2 || top_blobs.size() < 1)
         return -1;
 
+    // CPU実行専用のOptionを作成し、Vulkanアロケータを無効化する
+    ncnn::Option opt_cpu = opt;
+    opt_cpu.blob_allocator = 0;
+    opt_cpu.workspace_allocator = 0;
+
     ncnn::Mat image = bottom_blobs[0];
     ncnn::Mat flow = bottom_blobs[1];
 
@@ -23,11 +28,11 @@ int Warp::forward(const std::vector<ncnn::Mat>& bottom_blobs, std::vector<ncnn::
 
     if (image.elemsize != 4)
     {
-        ncnn::cast_float16_to_float32(bottom_blobs[0], image, opt);
+        ncnn::cast_float16_to_float32(bottom_blobs[0], image, opt_cpu);
     }
     if (flow.elemsize != 4)
     {
-        ncnn::cast_float16_to_float32(bottom_blobs[1], flow, opt);
+        ncnn::cast_float16_to_float32(bottom_blobs[1], flow, opt_cpu);
     }
 
     int w = image.w;
@@ -35,7 +40,7 @@ int Warp::forward(const std::vector<ncnn::Mat>& bottom_blobs, std::vector<ncnn::
     int channels = image.c;
 
     ncnn::Mat& top_blob = top_blobs[0];
-    top_blob.create(w, h, channels, 4u, opt.blob_allocator);
+    top_blob.create(w, h, channels, 4u, opt_cpu.blob_allocator);
     if (top_blob.empty())
         return -100;
 

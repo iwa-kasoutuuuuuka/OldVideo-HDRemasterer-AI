@@ -2,6 +2,7 @@
 #define UTILS_H
 
 #include <opencv2/opencv.hpp>
+#include <vector>
 
 /**
  * @brief 画像処理・GPU選択ユーティリティ
@@ -15,6 +16,11 @@ namespace utils {
      * GPU が見つからない場合は -1 を返す。
      */
     int get_preferred_gpu_index();
+
+    /**
+     * @brief 利用可能なすべての GPU インデックスをスコア順（降順）に並べ替えて返す
+     */
+    std::vector<int> get_gpu_indices_sorted();
 
     /**
      * @brief フレームのノイズ除去

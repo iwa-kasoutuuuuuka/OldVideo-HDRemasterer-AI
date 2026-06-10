@@ -65,9 +65,11 @@ int main(int argc, char** argv) {
             ("s,scale", "拡大率 (2 または 4) / Upscale ratio (2 or 4)", cxxopts::value<int>()->default_value("4"))
             ("t,tile", "VRAM節約のためのタイルサイズ (0 で自動) / Tile size for VRAM saving (0 for auto)", cxxopts::value<int>()->default_value("0"))
             ("m,models", "モデルディレクトリのパス / Path to models directory", cxxopts::value<std::string>()->default_value("models"))
-            ("stab", "手ブレ補正を有効化 / Enable video stabilization", cxxopts::value<bool>()->default_value("false"))
-            ("interp", "フレーム補間 (RIFE) を有効化 / Enable frame interpolation (RIFE)", cxxopts::value<bool>()->default_value("false"))
+            ("stab", "手ブレ補正を有効化 / Enable video stabilization", cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
+            ("interp", "フレーム補間 (RIFE) を有効化 / Enable frame interpolation (RIFE)", cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
             ("model_name", "モデル名 (例: realesr-animevideov3-x2) / Specific model name", cxxopts::value<std::string>()->default_value(""))
+            ("trim_start", "トリミング開始位置 (秒) / Trim start position in seconds", cxxopts::value<double>()->default_value("0.0"))
+            ("trim_duration", "トリミング時間 (秒, 0で無効) / Trim duration in seconds (0 to disable)", cxxopts::value<double>()->default_value("0.0"))
             ("h,help", "ヘルプを表示 / Show help");
 
         auto result = options.parse(argc, argv);
@@ -92,6 +94,16 @@ int main(int argc, char** argv) {
         config.model_name = result["model_name"].as<std::string>();
         config.enable_stabilization = result["stab"].as<bool>();
         config.enable_interpolation = result["interp"].as<bool>();
+
+        double trim_start = result["trim_start"].as<double>();
+        double trim_dur = result["trim_duration"].as<double>();
+        if (trim_dur > 0.0) {
+            config.enable_trim = true;
+            config.trim_start_sec = trim_start;
+            config.trim_duration_sec = trim_dur;
+        } else {
+            config.enable_trim = false;
+        }
 
         if (config.scale != 2 && config.scale != 4) {
             std::cerr << "[ERROR] 拡大率は 2 または 4 である必要があります。 / Scale must be 2 or 4." << std::endl;

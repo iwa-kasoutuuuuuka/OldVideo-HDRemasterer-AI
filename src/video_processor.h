@@ -50,7 +50,7 @@ public:
     /**
      * @brief VRAMから自動で推奨タイルサイズを計算します
      */
-    static int get_auto_tile_size();
+    static int get_auto_tile_size(bool enable_interpolation = false, const std::string& model_name = "");
 
 private:
     Upscaler upscaler;
